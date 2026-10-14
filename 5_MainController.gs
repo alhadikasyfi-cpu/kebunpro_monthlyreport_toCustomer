@@ -1,0 +1,1365 @@
+/**
+ * File 5: MainController.gs
+ * Alur:
+ *  1. Baca sheet (batas tabel = baris kosong pertama) + metrik turunan.
+ *  2. Salin template, buat satu slide per topik dari slide master {{slide_title}}.
+ *  3. Jawaban Claude dibaca dari sel D1, D2, ... sheet customer (ditempel pengguna; lihat file 4). Tanpa API.
+ *  4. Gambar grafik/tabel/kartu dengan Google Slides API (batch per slide).
+ *  5. Isi insight, speaker notes, KPI, daftar isi, nomor halaman.
+ *
+ * DECK UTAMA (urutan pertanyaan owner, maks. 10 slide):
+ *  Cover → Agenda & Tujuan Pertemuan → Ringkasan Eksekutif → Kinerja Bulan Ini (tabel kinerja: hasil, uang masuk, biaya, laba)
+ *  → Kebocoran Janjang (uang yang hilang) → Penyebab Naik-Turun Hasil → Keuangan Kebun → Tim Kerja
+ *  → Temuan Utama → Rekomendasi → Terima Kasih.
+ * LAMPIRAN: pembatas, Daftar Lampiran, slide detail A1–An (urut sesuai deck utama).
+ * Slide yang datanya kosong otomatis dilewati.
+ */
+
+function generateCustomerDeck() {
+  RUN_WARNINGS = [];
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  if (!ss) return showErrorAlert('Error: Tidak ada Google Sheets aktif yang terbuka!');
+  if (typeof Slides === 'undefined') {
+    return showErrorAlert('Aktifkan layanan "Google Slides API": editor Apps Script > Services (+) > Google Slides API > Add.');
+  }
+  const sheet = ss.getActiveSheet();
+  const data = loadSheetData(sheet);   // data kebun + target owner; sel jawaban Claude (D1, D2, ...) disembunyikan
+  const missing = checkDataCompleteness(data);
+  if (missing.length) RUN_WARNINGS.push(`Data belum ada di sheet (slide terkait dilewati atau ditandai): ${missing.join(', ')}.`);
+  if (!data.yield.length) return showErrorAlert(`Header 'ton/ha' tidak ditemukan di sheet '${sheet.getName()}'.`);
+
+  // 1. Rencana deck + jawaban Claude dari sel D1, D2, ... (dibaca SEBELUM template disalin, agar bisa dibatalkan tanpa file sisa)
+  const plan = planDeck(data);
+  const loaded = loadClaudeAnswer(sheet, data, plan);
+  if (loaded.abort) return;
+  const ai = loaded.ai;   // null = teks cadangan dari data
+
+  // 2. Salin template
+  const templateFile = getTemplateFile();
+  // Folder tujuan: OUTPUT_FOLDER_ID -> folder template -> My Drive user yang menjalankan (jika tidak punya akses edit)
+  let folder = null;
+  try {
+    if (DECK_CONFIG.OUTPUT_FOLDER_ID) folder = DriveApp.getFolderById(DECK_CONFIG.OUTPUT_FOLDER_ID);
+    else { const parents = templateFile.getParents(); folder = parents.hasNext() ? parents.next() : null; }
+  } catch (e) { folder = null; }
+  // Nama file memakai nama sheet (unik), karena beberapa customer bisa punya Title yang sama
+  const deckName = `${data.sheetName} - Monthly Report KebunPRO`;
+  let newFile;
+  try {
+    newFile = templateFile.makeCopy(deckName, folder || DriveApp.getRootFolder());
+  } catch (e) {
+    newFile = templateFile.makeCopy(deckName, DriveApp.getRootFolder());
+    RUN_WARNINGS.push(`Tidak punya akses edit ke folder tujuan; deck disimpan di My Drive ${Session.getActiveUser().getEmail() || 'Anda'}.`);
+  }
+  shareDeckWithSheetUsers(newFile, ss);
+  const presId = newFile.getId();
+  let pres = SlidesApp.openById(presId);
+
+  ['{{TITLE}}', '{{title}}'].forEach(p => pres.replaceAllText(p, data.title || data.sheetName));
+  const coverPeriod = (DECK_CONFIG.COVER_PERIOD_SOURCE === 'data' && data.dataPeriod) ? data.dataPeriod : (data.period || data.dataPeriod || '');
+  ['{{PERIOD}}', '{{period}}'].forEach(p => pres.replaceAllText(p, coverPeriod || '-'));
+  if (data.location) pres.replaceAllText('{{location}}', data.location);
+  else pres.replaceAllText('Lokasi: {{location}}', ' ');   // baris lokasi dihilangkan bila tidak dicatat
+  const master = findSlideByPlaceholder(pres, '{{slide_title}}');
+  if (!master) return showErrorAlert('Slide master {{slide_title}} tidak ditemukan. Jalankan menu "Siapkan Template SawitPRO" terlebih dahulu.');
+  const sectionMaster = findSlideByPlaceholder(pres, '{{section_title}}');   // template CBR: slide pembatas bagian
+
+  // Topik detail (lampiran), slide ringkasan owner (deck utama), dan urutannya sudah ditetapkan di planDeck()
+  const topics = plan.topics, anomTopic = plan.anomTopic, conclTopic = plan.conclTopic;
+  const mains = plan.mains, leads = plan.leads, appendix = plan.appendix;
+
+  // Slide template
+  const coverSlide = pres.getSlides()[0];
+  const tocSlide = findSlideByPlaceholder(pres, 'Daftar Isi') || findSlideByPlaceholder(pres, 'Table of Contents');
+  if (tocSlide) removeShapeWithText(tocSlide, '{{toc}}');
+  const introSlide = findSlideByPlaceholder(pres, '{{ai_description}}');
+  const closingSlide = findSlideByPlaceholder(pres, 'Terima Kasih') || findSlideByPlaceholder(pres, 'Thank You');
+  const legacyKpiCards = !!findSlideByPlaceholder(pres, '{{kpi1_value}}');   // template lama: 4 kartu tetap
+
+  // Buat semua slide dari master, lalu susun ulang urutannya
+  const dup = item => { item.slide = master.duplicate(); item.pageId = item.slide.getObjectId(); };
+  mains.forEach(dup);
+  mains.forEach(m => { if (m.lead) m.lead.pageId = m.pageId; });   // topik lead tampil di slide utama
+  [anomTopic, conclTopic].filter(Boolean).forEach(dup);
+  appendix.forEach(dup);
+  // Slide Agenda & Tujuan Pertemuan (slide 2): dari master konten, tanpa kartu INSIGHT
+  const agendaSlide = master.duplicate();
+  removeInsightCard(agendaSlide);
+  agendaSlide.replaceAllText('{{slide_title}}', 'Agenda & Tujuan Pertemuan');
+  let lampDivider = null;
+  if (sectionMaster) {
+    lampDivider = { slide: sectionMaster.duplicate() };
+    lampDivider.pageId = lampDivider.slide.getObjectId();
+    lampDivider.slide.replaceAllText('{{section_label}}', 'Lampiran');
+    lampDivider.slide.replaceAllText('{{section_title}}', 'Data dan bukti pendukung');
+    lampDivider.slide.replaceAllText('{{section_desc}}', `Detail A1–A${appendix.length} di balik setiap ringkasan`);
+    fitSectionLabel(lampDivider.slide, 'Lampiran');
+  }
+  // Judul slide ({{slide_title}}) diisi setelah AI menjawab: judul berupa jawaban, bukan nama topik.
+  [anomTopic, conclTopic].filter(Boolean).forEach(t => removeInsightCard(t.slide));   // slide lebar penuh: tanpa kartu INSIGHT
+  if (tocSlide) tocSlide.replaceAllText('Daftar Isi', 'Daftar Lampiran');
+
+  const finalOrder = [coverSlide, agendaSlide, introSlide].concat(mains.map(m => m.slide))
+    .concat([anomTopic, conclTopic].filter(Boolean).map(t => t.slide))
+    .concat([closingSlide, lampDivider && lampDivider.slide, tocSlide]).concat(appendix.map(t => t.slide)).filter(Boolean);
+  finalOrder.forEach((sl, i) => sl.move(i));
+  master.remove();
+  if (sectionMaster) sectionMaster.remove();
+  const mainCount = 3 + mains.length + [anomTopic, conclTopic].filter(Boolean).length + (closingSlide ? 1 : 0);
+  if (mainCount > 11) RUN_WARNINGS.push(`Deck utama ${mainCount} slide (target maks. 11, termasuk agenda).`);
+
+  const introPageId = introSlide ? introSlide.getObjectId() : null;
+  const agendaPageId = agendaSlide.getObjectId();
+  const tocPageId = tocSlide ? tocSlide.getObjectId() : null;
+  const order = pres.getSlides().map(x => x.getObjectId());
+  const pageOfId = id => order.indexOf(id) + 1;
+  const allPaged = appendix.concat(mains).concat(leads).concat([anomTopic, conclTopic].filter(Boolean));
+  allPaged.forEach(t => { t.page = pageOfId(t.pageId); });
+  // Nomor slide di jawaban Claude mengikuti rencana paket; bila template berbeda dari rencana, beri tahu pengguna
+  if (allPaged.some(t => t.plannedPage !== t.page)) {
+    RUN_WARNINGS.push('Susunan slide template berbeda dari rencana paket, sehingga nomor slide pada jawaban Claude (temuan, rekomendasi, kalimat penghubung) bisa bergeser. Jalankan "Siapkan Template SawitPRO", lalu buat paket baru.');
+  }
+  const pageOf = id => { const t = topics.find(x => x.id === id); return t ? t.page : null; };
+  // Tautan ke slide bukti: nomor halaman -> {pageId, label}
+  const linkOf = pg => { const t = appendix.find(x => x.page === pg) || mains.find(x => x.page === pg);
+    return t ? { pageId: t.pageId, label: t.appx ? `→ Lampiran ${t.appx}` : `→ hlm ${t.page}` } : null; };
+  pres.saveAndClose();
+
+  // 3. Rekomendasi & temuan: jawaban Claude bila ada, selain itu cadangan dari data
+  const detected = detectAnomalies(topics, data);
+  const candidates = detectRecommendations(data, topics, detected);
+  const actions = (ai && ai.conclusion && ai.conclusion.actions.length >= 2) ? ai.conclusion.actions
+    : (candidates.length ? fallbackActionsFromCatalog(candidates) : fallbackActions(data, pageOf));
+  attachProducts(actions);   // rekomendasi cadangan: produk SawitPRO dicocokkan dari kode rekomendasi
+  const anomalyRows = (ai && ai.anomalies && ai.anomalies.length) ? ai.anomalies : fallbackAnomalies(detectAnomalies(topics, data));
+  const agenda = (ai && ai.agenda && ai.agenda.items.length >= 3 && ai.agenda.outcomes.length) ? ai.agenda : fallbackAgenda(plan);
+  // Nomor slide -> pageId (untuk judul agenda yang dapat diklik)
+  const pageIdOf = pg => { if (pg === pageOfId(introPageId)) return introPageId;
+    const t = mains.concat([anomTopic, conclTopic].filter(Boolean)).concat(appendix).find(x => x.page === pg); return t ? t.pageId : null; };
+  const mainText = m => {
+    const r = ai && ai.summaries && ai.summaries[m.id];
+    const h = r && r.headline;
+    return {
+      headline: (h && titleFits(h) ? h : '') || dataHeadline(m.id, data) || m.title,
+      insight: (r && r.insight) || fallbackMainInsight(m),
+      notes: (r && r.speaker_notes) || fallbackMainNotes(m)
+    };
+  };
+
+  // 4. Gambar grafik / tabel / kartu / tombol
+  const safeDraw = (label, pageId, prefix, fn) => {
+    try { const b = new SlideBatch(pageId, prefix); fn(b); b.flush(presId); }
+    catch (e) { Logger.log(`Gambar '${label}' gagal: ${e.stack || e.message}`); RUN_WARNINGS.push(`Visual "${label}" gagal dibuat: ${e.message}`); }
+  };
+  mains.forEach(m => safeDraw(m.title, m.pageId, m.id, b => {
+    m.chartTopic.draw(b, ai);
+    const mt = mainText(m);
+    const ins = stripBold(mt.insight).trim(), I = DECK_CONFIG.LAYOUT.INSIGHT;
+    drawDetailButtons(b, m.members.map(t => ({ pageId: t.pageId, label: `Lampiran ${t.appx} · ${shortTitle(t)} →`, short: `${t.appx} ${shortTitle(t)}` })),
+      ins ? I.top + insightCardHeight(ins) + DECK_CONFIG.LAYOUT.CARD_GAP : I.top);   // tanpa insight: tombol mulai di atas
+  }));
+  safeDraw('Agenda', agendaPageId, 'agenda', b => drawAgenda(b,
+    agenda.items.map(it => Object.assign({}, it, { pageId: pageIdOf((it.pages || [])[0]) })), agenda.outcomes));
+  if (anomTopic) safeDraw(anomTopic.title, anomTopic.pageId, 'anomali', b => drawAnomalyTable(b, anomalyRows, linkOf));
+  if (conclTopic) safeDraw(conclTopic.title, conclTopic.pageId, 'kesimpulan', b => drawConclusionCards(b, actions, linkOf));
+  appendix.forEach(t => safeDraw(t.title, t.pageId, t.id, b => {
+    t.draw(b, ai);
+    drawBackButtons(b, t.mainOf ? { label: `← ${t.mainOf.title}`, pageId: t.mainOf.pageId, primary: true } : null,
+      tocPageId ? { label: 'Daftar lampiran', pageId: tocPageId } : null);
+  }));
+  if (tocPageId) safeDraw('Daftar Lampiran', tocPageId, 'toc', b => drawAppendixIndex(b, mains.map(m => ({
+    title: m.title, items: m.members.map(t => ({ code: t.appx, title: shortTitle(t, true), page: t.page, pageId: t.pageId })) }))
+    .concat([{ title: 'Lainnya', items: appendix.filter(t => !t.mainOf).map(t => ({ code: t.appx, title: t.title, page: t.page, pageId: t.pageId })) }])));
+
+  const leadText = (ai && ai.executive_summary) || fallbackSummary(data);
+  if (introPageId && !legacyKpiCards) {
+    safeDraw('Kartu KPI', introPageId, 'kpi', b => {
+      // kartu mulai space-section-gap di bawah paragraf pembuka (2–4 baris) dan mengisi sisa tinggi
+      const L = DECK_CONFIG.LAYOUT, T = DECK_CONFIG.TYPE;
+      const leadLines = Math.min(4, Math.max(2, estLines(stripBold(leadText), T.LEAD, L.RIGHT - L.MARGIN)));
+      drawKpiCards(b, computeOwnerKpis(data), L.BODY_TOP + leadLines * T.LEAD * 1.55 + L.SECTION_GAP);
+    });
+  } else if (legacyKpiCards) {
+    RUN_WARNINGS.push('Template masih versi lama (4 kartu KPI tetap). Jalankan "Siapkan Template SawitPRO" agar jumlah kartu mengikuti DECK_CONFIG.KPIS.');
+  }
+
+  // 5. Teks
+  pres = SlidesApp.openById(presId);
+  mains.forEach(m => {
+    const slide = pres.getSlideById(m.pageId);
+    if (!slide) return;
+    const mt = mainText(m);
+    slide.replaceAllText('{{slide_title}}', mt.headline);
+    writeInsight(slide, mt.insight);
+    setSlideSpeakerNotes(slide, `${mt.notes}` + (m.members.length ? `\n\nDetail di lampiran: ${m.members.map(t => `${t.appx} ${t.title} (hlm ${t.page})`).join('; ')}.` : ''));
+  });
+  [anomTopic, conclTopic].filter(Boolean).forEach(t => {
+    const slide = pres.getSlideById(t.pageId);
+    if (!slide) return;
+    slide.replaceAllText('{{slide_title}}', t.kind === 'anomali' ? anomalyHeadline(anomalyRows, t.title) : conclusionHeadline(actions, t.title));
+    if (t.kind === 'anomali') setSlideSpeakerNotes(slide, (ai && ai.anomaly_notes) ||
+      anomalyRows.map((a, i) => `${i + 1}. ${a.finding}: ${a.evidence} ${a.argument} Tindak lanjut: ${a.follow_up}`).join('\n'));
+    else setSlideSpeakerNotes(slide, ((ai && ai.conclusion.speaker_notes) ||
+      `Rekomendasi untuk owner: ${actions.map((a, i) => `${i + 1}. ${a.title}. ${a.detail}`).join(' ')}`) +
+      `\n\nRingkasan rekomendasi:\n${actions.map((a, i) => `${i + 1}. [${a.code || '-'}] ${a.title} | dampak: ${a.impact || '-'} | waktu: ${a.timeline || '-'}${a.evidence ? ` | bukti: ${a.evidence}` : ''}`).join('\n')}`);
+  });
+  appendix.forEach(t => {
+    const slide = pres.getSlideById(t.pageId);
+    if (!slide) return;
+    const r = ai && ai.byId[t.id];
+    const useAi = r && r.insight && !r.mismatch;   // AI ditolak bila tren yang dipilih bertentangan dengan sinyal data
+    // Judul lampiran = jawaban (AI) -> judul otomatis dari data -> nama topik. Daftar Lampiran tetap memakai nama topik.
+    slide.replaceAllText('{{slide_title}}', (useAi && r.headline) || dataHeadline(t.id, data) || t.title);
+    const insightText = useAi ? r.insight : t.fallback;
+    writeInsight(slide, insightText);
+    slide.replaceAllText('Materi Milik SawitPRO', `Lampiran ${t.appx} · Materi Milik SawitPRO`);
+    const g = t.signal;
+    const head = [r && r.status ? `Status: ${r.status}` : null, g ? `Tren: ${g.trend}` : null, g && g.position !== 'data kurang' ? `Bulan terakhir: ${g.position}` : null]
+      .filter(Boolean).join(' · ');
+    setSlideSpeakerNotes(slide, `Lampiran ${t.appx}${t.mainOf ? ` (detail dari slide ${t.mainOf.page} "${t.mainOf.title}")` : ''}\n${head ? head + '\n' : ''}` +
+      `Penghubung: ${(r && r.bridge) || fallbackBridge(t)}\n\n${(useAi && r.speaker_notes) || fallbackNotes(t)}`);
+  });
+  if (lampDivider) {
+    const sl = pres.getSlideById(lampDivider.pageId);
+    if (sl) setSlideSpeakerNotes(sl, `Lampiran berisi ${appendix.length} slide detail sebagai bukti setiap ringkasan. Buka lewat tombol "Lampiran …" di slide ringkasan, atau lewat Daftar Lampiran.`);
+  }
+  const tocS = tocPageId ? pres.getSlideById(tocPageId) : null;
+  if (tocS) setSlideSpeakerNotes(tocS, `Daftar Lampiran: klik kode atau judul untuk membuka slide detail; setiap slide lampiran punya tombol untuk kembali ke ringkasannya.\n` +
+    mains.filter(m => m.members.length).map(m => `${m.title} (slide ${m.page}): ${m.members.map(t => `${t.appx} ${t.title}`).join(', ')}`).join('\n'));
+  const agendaS = pres.getSlideById(agendaPageId);
+  if (agendaS) setSlideSpeakerNotes(agendaS, agenda.notes ||
+    `Pertemuan ini membahas ${agenda.items.map(it => it.title.toLowerCase()).join(', ')}. Hasil yang dituju: ${agenda.outcomes.map((o, i) => `${i + 1}) ${o}`).join(' ')}`);
+  const intro = introPageId ? pres.getSlideById(introPageId) : null;
+  if (intro) setSlideSpeakerNotes(intro, (ai && ai.intro_notes) || fallbackIntroNotes(data, mains));
+  // paragraf pembuka: angka kunci ditebalkan (**...**), tinggi kotak mengikuti 2–4 baris
+  if (intro) writeWithBold(intro, '{{ai_description}}', leadText);
+  if (legacyKpiCards) computeKpis(data, 4).forEach((k, i) => {
+    pres.replaceAllText(`{{kpi${i + 1}_value}}`, k.value);
+    pres.replaceAllText(`{{kpi${i + 1}_unit}}`, k.unit || ' ');
+    pres.replaceAllText(`{{kpi${i + 1}_label}}`, k.note || k.name || ' ');
+  });
+  pres.getSlides().forEach((s, i) => s.replaceAllText('{{page}}', String(i + 1)));
+
+  pres.saveAndClose();
+  showSuccessModal(newFile.getUrl(), data.title || data.sheetName, !!ai);
+}
+
+/* ------------------------------------------------------------------------- */
+/* Data + target owner, KPI berpembanding, agenda cadangan, produk SawitPRO   */
+/* ------------------------------------------------------------------------- */
+
+/**
+ * Baca data kebun (sel jawaban Claude disembunyikan) + TARGET OWNER opsional
+ * (label di satu sel, nilai tepat di kanannya; lihat DECK_CONFIG.HEADERS.TARGET_*).
+ */
+function loadSheetData(sheet) {
+  const view = maskedSheetView(sheet);
+  const d = getSheetData(view);
+  // Nilai ASLI sel (bukan tampilan): pada locale Indonesia angka 1200 tampil "1.200" dan akan terbaca 1,2.
+  const H = DECK_CONFIG.HEADERS, values = view.getDataRange().getValues();
+  const num = aliases => {
+    const c = aliases ? findCell(values, aliases) : null;
+    if (!c) return null;
+    const v = values[c.r][c.c + 1];
+    const n = typeof v === 'number' ? v : parseNum(v);
+    return n && n > 0 ? n : null;
+  };
+  d.targets = { tbs: num(H.TARGET_TBS), yield: num(H.TARGET_YIELD), bjr: num(H.TARGET_BJR), revenue: num(H.TARGET_REVENUE) };
+  return d;
+}
+
+function kpiDelta(cur, ref) { return cur !== null && cur !== undefined && ref ? ((cur - ref) / Math.abs(ref)) * 100 : null; }
+function arrowPct(p) { return p === null ? '' : `${p >= 0 ? '▲' : '▼'} ${fmt(Math.abs(p), 0)}%`; }
+/** 'good' | 'bad' | 'neutral' dari selisih (%) dan arah yang baik (naik baik = true). */
+function toneOf(p, goodUp) { if (p === null || Math.abs(p) < 1) return 'neutral'; return (p > 0) === goodUp ? 'good' : 'bad'; }
+/** Realisasi vs target: catatan & warna. */
+function vsTarget(value, target, unitTxt, f) {
+  const ach = (value / target) * 100;
+  return { note: `Target ${f(target)}${unitTxt} · tercapai ${fmt(ach, 0)}%`, tone: ach >= 100 ? 'good' : ach >= 90 ? 'neutral' : 'bad' };
+}
+
+/**
+ * Kartu KPI Ringkasan Eksekutif: realisasi + PEMBANDING di bawahnya. Pembanding = target owner bila diisi di sheet;
+ * bila kosong = bulan sebelumnya (TBS, pendapatan, laba) atau rata-rata periode (yield, BJR). Mengembalikan {name, value, unit, note, tone} atau null bila datanya tidak ada.
+ */
+const OWNER_KPIS = {
+  produksi_total: d => {
+    const s = seriesStats(d.produksi);
+    if (!s) return null;
+    const f = x => fmt(x, x < 100 ? 1 : 0), v = s.last.value;
+    const k = { name: `${d.produksiActual ? 'TBS terjual' : 'Estimasi produksi'} ${monthShort(s.last.p)}`, value: f(v), unit: 'ton' };
+    if (d.targets && d.targets.tbs) return Object.assign(k, vsTarget(v, d.targets.tbs, ' ton', f));
+    if (s.prev) { const p = kpiDelta(v, s.prev.value); return Object.assign(k, { note: `${arrowPct(p)} vs ${monthShort(s.prev.p)} (${f(s.prev.value)} ton)`, tone: toneOf(p, true) }); }
+    return Object.assign(k, { note: 'Belum ada bulan pembanding', tone: 'neutral' });
+  },
+  yield_rata2: d => {
+    const s = seriesStats(d.yield);
+    if (!s) return null;
+    const f = x => fmt(x, 2), v = s.last.value;
+    const k = { name: `Yield ${monthShort(s.last.p)}`, value: f(v), unit: 'ton/ha' };
+    if (d.targets && d.targets.yield) return Object.assign(k, vsTarget(v, d.targets.yield, ' ton/ha', f));
+    if (s.n > 1) { const p = kpiDelta(v, s.avg); return Object.assign(k, { note: `${arrowPct(p)} vs rata-rata ${s.n} bulan (${f(s.avg)})`, tone: toneOf(p, true) }); }
+    return Object.assign(k, { note: 'Belum ada bulan pembanding', tone: 'neutral' });
+  },
+  bjr_rata2: d => {
+    const src = d.bjr && d.bjr.some(x => x.value !== null) ? d.bjr : (d.bjrSoldMonthly || []);
+    const s = seriesStats(src);
+    if (!s) return null;
+    const f = x => fmt(x, 1), v = s.last.value;
+    const k = { name: `BJR ${monthShort(s.last.p)}`, value: f(v), unit: 'kg/janjang' };
+    if (d.targets && d.targets.bjr) return Object.assign(k, vsTarget(v, d.targets.bjr, ' kg', f));
+    if (s.n > 1) { const p = kpiDelta(v, s.avg); return Object.assign(k, { note: `${arrowPct(p)} vs rata-rata ${s.n} bulan (${f(s.avg)} kg)`, tone: toneOf(p, true) }); }
+    return Object.assign(k, { note: 'Belum ada bulan pembanding', tone: 'neutral' });
+  },
+  pendapatan_bulan_terakhir: d => {
+    const s = seriesStats(d.revenueTotal);
+    if (!s) return null;
+    const r = rpParts(s.last.value), k = { name: `Pendapatan ${monthShort(s.last.p)}`, value: r.value, unit: r.unit };
+    if (d.targets && d.targets.revenue) return Object.assign(k, vsTarget(s.last.value, d.targets.revenue, '', x => fmtRpShort(x)));
+    if (s.prev) { const p = kpiDelta(s.last.value, s.prev.value); return Object.assign(k, { note: `${arrowPct(p)} vs ${monthShort(s.prev.p)} (${fmtRpShort(s.prev.value)})`, tone: toneOf(p, true) }); }
+    return Object.assign(k, { note: 'Belum ada bulan pembanding', tone: 'neutral' });
+  },
+  pencapaian_marihat: d => {
+    const M = d.marihat;
+    if (!M) return null;
+    return { name: `Vs standar Marihat ${M.cls}`, value: fmtPct(M.achTon * 100, 0), unit: '',
+             note: `${fmt(M.realTonHa, 1)} vs potensi ${fmt(M.pot.ton, 1)} ton/ha/tahun`, tone: M.achTon >= 0.9 ? 'good' : 'bad' };
+  },
+  kebocoran_janjang: d => {
+    const F = d.flow, lim = DECK_CONFIG.THRESHOLDS.FLOW_LOSS_PCT;
+    if (!F) return null;
+    if (F.overSold) return { name: 'Kebocoran janjang', value: '–', unit: 'belum terukur', note: 'Catatan panen kurang dari janjang terjual', tone: 'bad' };
+    if (!F.lossJjg) return { name: 'Kebocoran janjang', value: '0%', unit: '', note: `Batas wajar ≤ ${lim}% · tercatat lengkap`, tone: 'good' };
+    const bad = F.lossPct > lim;
+    if (F.lossRp) { const r = rpParts(F.lossRp, 0);
+      return { name: 'Estimasi kerugian janjang', value: r.value, unit: r.unit, note: `${fmt(F.lossPct, 0)}% hilang · batas wajar ≤ ${lim}%`, tone: bad ? 'bad' : 'good' }; }
+    return { name: 'Kebocoran janjang', value: `${fmt(F.lossPct, 0)}%`, unit: '', note: `Batas wajar ≤ ${lim}%`, tone: bad ? 'bad' : 'good' };
+  },
+  laba_bulan_terakhir: d => {
+    const s = seriesStats(d.profit);
+    if (!s) return null;
+    const r = rpParts(s.last.value), k = { name: `Laba kotor ${monthShort(s.last.p)}`, value: r.value, unit: r.unit };
+    if (s.prev) { const p = kpiDelta(s.last.value, s.prev.value); return Object.assign(k, { note: `${arrowPct(p)} vs ${monthShort(s.prev.p)} (${fmtRpShort(s.prev.value)})`, tone: toneOf(p, true) }); }
+    return Object.assign(k, { note: 'Pendapatan − biaya pekerja', tone: 'neutral' });
+  },
+  tanpa_berat: d => {
+    const N = d.noWeight, lim = DECK_CONFIG.THRESHOLDS.NOWEIGHT_PCT;
+    if (!N) return null;
+    return { name: 'Terjual tanpa berat', value: `${fmt(N.share, 0)}%`, unit: '',
+             note: `Batas wajar ≤ ${lim}% · ±${fmtRpShort(N.rpSum)}`, tone: N.share > lim ? 'bad' : 'good' };
+  },
+  biaya_per_kg: d => {
+    const s = seriesStats(d.upahKg), h = seriesStats(d.hargaJual && d.hargaJual.length ? d.hargaJual : d.revKg);
+    if (!s) return null;
+    const share = h && h.last.value ? (s.last.value / h.last.value) * 100 : null;
+    return { name: `Biaya pekerja ${monthShort(s.last.p)}`, value: fmt(s.last.value, 0), unit: 'Rp/kg',
+             note: share !== null ? `${fmt(share, 0)}% dari harga jual Rp${fmt(h.last.value, 0)}/kg` : 'Harga jual belum tersedia', tone: 'neutral' };
+  }
+};
+
+/** Kartu KPI sesuai DECK_CONFIG.KPIS; KPI tanpa data diganti KPI lain yang datanya ada. */
+function computeOwnerKpis(data) {
+  const keys = DECK_CONFIG.KPIS || [];
+  const n = Math.max(3, Math.min(6, keys.length || 4));
+  const lib = (typeof KPI_LIBRARY !== 'undefined') ? KPI_LIBRARY : {};
+  const get = k => { try { return (OWNER_KPIS[k] ? OWNER_KPIS[k](data) : (lib[k] ? lib[k](data) : null)) || null; } catch (e) { return null; } };
+  const kpis = keys.map(get).filter(Boolean);
+  Object.keys(OWNER_KPIS).concat(Object.keys(lib)).forEach(k => {
+    if (kpis.length < n && keys.indexOf(k) < 0) { const v = get(k); if (v && !kpis.some(x => x.name === v.name)) kpis.push(v); }
+  });
+  while (kpis.length < n) kpis.push({ name: 'Data', value: '-', unit: '', note: 'Data belum tersedia', tone: 'neutral' });
+  return kpis.slice(0, n);
+}
+
+/** Deskripsi agenda cadangan (satu baris) per slide ringkasan. */
+const AGENDA_DESC = {
+  m_kinerja: 'Hasil, pendapatan, biaya, dan laba bulan laporan',
+  m_kebocoran: 'Janjang yang hilang dari panen sampai terjual',
+  m_penyebab: 'Faktor penentu hasil per hektar',
+  m_keuangan: 'Laba kotor dan komposisi biaya pekerja',
+  m_tim: 'Produktivitas mandor panen, muat, dan rawat'
+};
+
+/** Agenda & hasil yang dituju bila jawaban Claude tidak ada: mengikuti slide ringkasan + sesi prioritas & langkah selanjutnya. */
+function fallbackAgenda(plan) {
+  const items = plan.mains.map(m => ({ title: m.title, desc: AGENDA_DESC[m.id] || '', minutes: 10, pages: [m.page] }));
+  const decide = plan.anomTopic || plan.conclTopic;
+  if (decide) items.push({ title: 'Prioritas dan Langkah Selanjutnya', desc: 'Prioritas perbaikan, dukungan SawitPRO, dan jadwal tinjauan', minutes: 20, pages: [decide.page] });
+  // Sudut pandang penyedia layanan (SawitPRO/KebunPRO) kepada owner pelanggan: apa yang owner dapatkan dan sepakati bersama
+  return {
+    items: items.slice(0, 6),
+    outcomes: ['Pemahaman bersama atas kinerja kebun dan temuan terpenting bulan ini',
+               'Kesepakatan prioritas perbaikan yang akan didampingi tim SawitPRO',
+               'Jadwal tindak lanjut dan tinjauan bulan berikutnya'],
+    notes: ''
+  };
+}
+
+/** Produk SawitPRO berdasarkan nama (persis, tanpa beda huruf besar/kecil). */
+function productByName(name) {
+  const n = String(name || '').trim().toLowerCase();
+  return n ? (DECK_CONFIG.SAWITPRO_PRODUCTS || []).find(p => p.name.toLowerCase() === n) || null : null;
+}
+
+/**
+ * Rekomendasi tanpa field product (cadangan dari data): pasangkan produk SawitPRO yang cocok dengan kode rekomendasinya,
+ * maksimal 2 kartu agar tidak berkesan promosi. Rekomendasi dari Claude tidak diubah (Claude sudah memilih).
+ */
+function attachProducts(actions) {
+  let used = actions.filter(a => a.product).length;
+  actions.forEach(a => {
+    if (a.product !== undefined) return;
+    const p = used < 2 ? (DECK_CONFIG.SAWITPRO_PRODUCTS || []).find(x => (x.codes || []).indexOf(a.code) >= 0) : null;
+    a.product = p || null;
+    if (p) used++;
+  });
+  return actions;
+}
+
+/**
+ * Rencana deck untuk satu kebun: topik, slide ringkasan owner (mains), lampiran (A1..An), penghubung antar-slide,
+ * dan NOMOR HALAMAN RENCANA. Dipakai bersama oleh paket data (menu 1) dan generate (menu 2), sehingga nomor slide
+ * pada jawaban Claude sama dengan nomor di deck.
+ * Urutan deck: cover (1), Agenda & Tujuan Pertemuan (2), Ringkasan Eksekutif (3), slide ringkasan, Temuan, Rekomendasi, Penutup, pembatas Lampiran,
+ * Daftar Lampiran, lalu slide lampiran.
+ */
+function planDeck(data) {
+  // Topik detail (menjadi LAMPIRAN) & slide ringkasan untuk owner (DECK UTAMA, maks. 10 slide)
+  const topics = buildTopics(data);
+  const detail = topics.filter(t => t.kind !== 'anomali' && t.kind !== 'conclusion');
+  const anomTopic = topics.find(t => t.kind === 'anomali');
+  const conclTopic = topics.find(t => t.kind === 'conclusion');
+  if (anomTopic) anomTopic.title = 'Temuan Utama yang Perlu Dicek';
+  if (conclTopic) conclTopic.title = 'Rekomendasi untuk Owner';
+
+  // Kelompok ringkasan: tiap kelompok = 1 slide utama berisi 1 visual kunci + insight + tombol ke lampiran.
+  // lead = topik yang TAMPIL di slide utama dan tidak diulang di lampiran (mis. tabel Kinerja Bulan Ini).
+  const mains = [];
+  MAIN_GROUPS.forEach(g => {
+    const lead = g.lead ? detail.find(t => t.id === g.lead) || null : null;
+    const members = g.members.map(id => detail.find(t => t.id === id)).filter(Boolean);
+    if (!members.length && !lead) return;
+    const chartTopic = lead || g.chart.map(id => members.find(t => t.id === id)).find(Boolean) || members[0];
+    mains.push({ id: g.id, kind: 'main', title: g.title, group: g, members, chartTopic, lead });
+  });
+  const leads = mains.map(m => m.lead).filter(Boolean);
+  // Lampiran: urut sesuai deck utama, lalu topik lain yang belum masuk kelompok
+  const appendix = [];
+  mains.forEach(m => m.members.forEach(t => { if (appendix.indexOf(t) < 0) { appendix.push(t); t.mainOf = m; } }));
+  detail.filter(t => appendix.indexOf(t) < 0 && leads.indexOf(t) < 0).forEach(t => appendix.push(t));
+  appendix.forEach((t, i) => { t.appx = `A${i + 1}`; });
+  // Penghubung antar-slide mengikuti urutan yang benar-benar dilihat owner
+  const ordered = leads.concat(appendix);
+  ordered.forEach((t, i) => { t.prev = i ? ordered[i - 1] : null; });
+
+  // Nomor halaman rencana (sama dengan urutan di generateCustomerDeck): cover 1, agenda 2, Ringkasan Eksekutif 3
+  let pg = 3;
+  mains.forEach(m => { m.page = ++pg; if (m.lead) m.lead.page = m.page; });
+  if (anomTopic) anomTopic.page = ++pg;
+  if (conclTopic) conclTopic.page = ++pg;
+  pg += 3;   // penutup, pembatas Lampiran, Daftar Lampiran
+  appendix.forEach(t => { t.page = ++pg; });
+  appendix.concat(mains).concat(leads).concat([anomTopic, conclTopic].filter(Boolean)).forEach(t => { t.plannedPage = t.page; });
+  return { topics, anomTopic, conclTopic, mains, leads, appendix };
+}
+
+/**
+ * Tabel "Kinerja Bulan Ini" untuk owner (tampil di deck utama setelah Ringkasan Eksekutif).
+ * Berisi pertanyaan owner berurutan: berapa hasil, berapa uang masuk, berapa biaya, berapa sisa, lalu mutu & pencatatan.
+ * Kolom: bulan laporan | bulan sebelumnya | rata-rata periode | selisih vs rata-rata.
+ * Warna selisih mengikuti arti BAIK/BURUK (biaya atau tanpa berat yang naik = merah), bukan sekadar arah.
+ */
+function buildOwnerScorecard(d) {
+  const base = seriesStats(d.produksi) || seriesStats(d.yield);
+  if (!base) return null;
+  const last = base.last.p, prev = base.prev ? base.prev.p : null;
+  const bjrMain = d.bjr.some(x => x.value !== null) ? d.bjr : (d.bjrSoldMonthly || []);
+  const price = d.hargaJual.length ? d.hargaJual : d.revKg;
+  const jt = v => fmt(v / 1e6, 1);
+  const tbsName = !d.produksiActual ? 'Estimasi produksi (ton)' : DECK_CONFIG.TONASE_BASIS === 'terjual' ? 'TBS terjual (ton)' : 'Produksi TBS (ton)';
+  // [nama, seri, format, arah baik: 1 = naik baik, -1 = turun baik, 0 = netral]
+  const metrics = [
+    [tbsName, d.produksi, v => fmt(v, Math.abs(v) < 100 ? 1 : 0), 1],
+    ['Pendapatan (Rp juta)', d.revenueTotal, jt, 1],
+    ['Biaya pekerja (Rp juta)', d.costTotal, jt, -1],
+    ['Laba kotor (Rp juta)', d.profit, jt, 1],
+    ['Harga jual (Rp/kg)', price, v => fmt(v, 0), 1],
+    ['Yield (ton/ha)', d.yield, v => fmt(v, 2), 1],
+    ['BJR (kg/janjang)', bjrMain, v => fmt(v, 1), 1],
+    ['Luas panen (ha)', d.luasPanen, v => fmt(v, 0), 0],
+    ['Terjual tanpa berat', d.noWeight ? d.noWeight.series : [], v => `${fmt(v, 0)}%`, -1]
+  ];
+  const rows = [], good = [], facts = [];
+  metrics.forEach(([name, s, f, dir]) => {
+    const st = seriesStats(s);
+    if (!st) return;
+    const a = valAt(s, last), b = valAt(s, prev);
+    const diff = a !== null && st.avg ? ((a - st.avg) / Math.abs(st.avg)) * 100 : null;
+    // spasi tipis di depan panah: warna ditentukan cellColor (arti baik/buruk), bukan warna panah bawaan tabel
+    const dtxt = diff === null || d.snapshot ? '-' : ` ${diff >= 0 ? '▲ +' : '▼ '}${fmt(diff, 0)}%`;
+    rows.push([name, a === null ? '-' : f(a), b === null ? '-' : f(b), f(st.avg), dtxt]);
+    good.push(dir);
+    facts.push(`${name}: ${monthLong(last)} ${a === null ? 'kosong' : f(a)}; ${prev ? monthLong(prev) : '-'} ${b === null ? 'kosong' : f(b)}; rata-rata ${f(st.avg)}; vs rata-rata ${dtxt.trim()}` +
+      (dir === -1 ? ' (makin kecil makin baik)' : ''));
+  });
+  if (!rows.length) return null;
+  let headers = ['Indikator', `${monthShort(last)}\nbulan laporan`, prev ? `${monthShort(prev)}\npembanding` : '-', `Rata-rata\n${base.n} bulan`, 'Selisih\nvs rata-rata'];
+  let keep = [0, 1, 2, 3, 4];
+  if (!prev || !DECK_CONFIG.SCORECARD_SHOW_PREV) keep = keep.filter(i => i !== 2);
+  if (base.n < 2) keep = keep.filter(i => i !== 3 && i !== 4);
+  else if (d.snapshot) keep = keep.filter(i => i !== 4);   // data < MIN_MONTHS_FOR_TREND: selisih vs rata-rata belum bermakna
+  headers = keep.map(i => headers[i]);
+  const finalRows = rows.map(r => keep.map(i => r[i]));
+  const deltaCol = keep.indexOf(4);
+  const C = DECK_CONFIG.COLOR;
+  const cellColor = (r, c, txt) => {
+    if (c !== deltaCol || deltaCol < 0) return null;
+    const dir = good[r - 1];
+    if (!dir || !/[▲▼]/.test(txt)) return null;
+    return (txt.indexOf('▲') >= 0) === (dir > 0) ? C.GREEN : C.DANGER;
+  };
+  return {
+    headers, keep, rows: finalRows, cellColor,
+    colWidths: [3.4, 1.65, 1.65, 1.65, 1.65].filter((_, i) => keep.indexOf(i) >= 0),
+    facts: `Kinerja bulan terakhir (${monthLong(last)}); laba kotor = pendapatan − biaya pekerja, sebelum biaya material:\n` + facts.join('\n'),
+    lastLabel: monthLong(last)
+  };
+}
+
+/** Definisi slide konten. visual = deskripsi isi visual untuk peta slide untuk AI. */
+function buildTopics(d) {
+  const C = DECK_CONFIG.COLOR;
+  const f2 = v => fmt(v, 2), f1 = v => fmt(v, 1), f0 = v => fmt(v, 0);
+  const rp = v => `Rp${fmt(v, 0)}`;
+  const T = [];
+  const has = s => s && s.some(x => x.value !== null);
+
+  const sc = buildOwnerScorecard(d);
+  if (sc) T.push({
+    id: 'scorecard', section: 'Kinerja Bulan Ini', title: `Kinerja ${sc.lastLabel}`,
+    visual: `tabel kinerja bulan terakhir (hasil, pendapatan, biaya pekerja, laba kotor, harga, yield, BJR, luas panen, janjang tanpa berat)${sc.keep.indexOf(2) >= 0 ? ' vs bulan sebelumnya' : ''}${sc.keep.indexOf(3) >= 0 ? ' vs rata-rata periode' : ''}`,
+    facts: sc.facts,
+    fallback: `Kinerja ${sc.lastLabel}: ${sc.rows.slice(0, 4).map(r => `${r[0]} ${r[1]}`).join(', ')}.`,
+    draw: b => drawTable(b, sc.headers, sc.rows, { colWidths: sc.colWidths,
+      fontSize: DECK_CONFIG.TYPE.TABLE_CELL, headerSize: DECK_CONFIG.TYPE.TABLE_HEADER, rowHeight: 25, headerHeight: 36,
+      numCols: sc.headers.map((_, i) => i).filter(i => i > 0), cellColor: sc.cellColor })
+  });
+
+  if (has(d.yield)) T.push({
+    id: 'yield', section: 'Produktivitas Kebun', title: 'Produktivitas Kebun: Yield',
+    visual: 'bar yield ton/ha per bulan, bulan tertinggi disorot',
+    facts: describeSeries('Yield', 'ton/ha', d.yield, f2),
+    fallback: fallbackInsight('Yield', 'ton/ha', d.yield, f2),
+    draw: b => drawBarChart(b, d.yield, { labelFmt: f2, axisFmt: f1 })
+  });
+
+  const M = d.marihat;
+  if (M) T.push({
+    id: 'marihat', title: 'Pencapaian vs Standar Marihat',
+    visual: `tabel realisasi vs potensi standar Marihat (PPKS) kelas ${M.cls}: produktivitas ton/ha/tahun, BJR, janjang per pokok, produksi setahun`,
+    facts: describeMarihat(d),
+    fallback: `Produktivitas kebun ${fmt(M.realTonHa, 1)} ton TBS/ha/tahun, ${fmtPct(M.achTon * 100, 0)} dari potensi standar Marihat ${M.cls} sebesar ${fmt(M.pot.ton, 1)} ton untuk umur tanamannya. Selisihnya sekitar ${fmt(M.gapTon, 0)} ton per tahun${M.gapRp ? ` atau ${fmtRp(M.gapRp)}` : ''}.`,
+    draw: b => drawTable(b, ['Indikator', 'Realisasi', `Standar Marihat\nkelas ${M.cls}`, 'Pencapaian'], [
+      ['Produktivitas (ton TBS/ha/tahun)', fmt(M.realTonHa, 1), fmt(M.pot.ton, 1), fmtPct(M.achTon * 100, 0)],
+      ['BJR (kg/janjang)', fmt(M.realBjr, 1), fmt(M.pot.rbt, 1), M.achBjr ? fmtPct(M.achBjr * 100, 0) : '-'],
+      [`Janjang per pokok per tahun${d.sphAssumed ? '*' : ''}`, M.realRjt ? fmt(M.realRjt, 1) : '-', fmt(M.pot.rjt, 1), M.achRjt ? fmtPct(M.achRjt * 100, 0) : '-'],
+      [M.usePanen ? 'Produksi panen setahun (ton, estimasi)' : 'Produksi setahun (ton TBS)', fmt(M.realTonYear, 0), fmt(M.potTonYear, 0), fmtPct((M.realTonYear / M.potTonYear) * 100, 0)],
+      ...(M.usePanen ? [['TBS terjual setahun (ton)', fmt(M.soldTonYear, 0), '-', fmtPct((M.soldTonYear / M.potTonYear) * 100, 0)]] : []),
+      ['Potensi tambahan per tahun', '-', `${fmt(M.gapTon, 0)} ton`, M.gapRp ? fmtRpShort(M.gapRp) : '-'],
+      [`Dasar: ${fmt(M.area, 1)} ha blok${M.annualized ? `, disetahunkan dari ${M.nMonths} bln` : ''}`, '', d.landClassAssumed ? 'kelas lahan diasumsikan' : '', d.sphAssumed ? `*${d.sph} pokok/ha` : '']
+    ], { colWidths: [3.2, 1.6, 2.0, 1.6], fontSize: DECK_CONFIG.TYPE.TABLE_CELL, headerSize: DECK_CONFIG.TYPE.TABLE_HEADER, rowHeight: 25, headerHeight: 36, numCols: [1, 2, 3] })
+  });
+
+  if (has(d.jjgHa)) T.push({
+    id: 'jjg', section: 'Produktivitas Kebun', title: 'Produktivitas Kebun: Kerapatan Panen (JJG/ha)',
+    visual: 'bar JJG per hektar per bulan (jumlah janjang yang dipanen per ha)',
+    facts: describeSeries('JJG/ha', 'JJG/ha', d.jjgHa, f2),
+    fallback: fallbackInsight('JJG/ha', '', d.jjgHa, f2),
+    draw: b => drawBarChart(b, d.jjgHa, { labelFmt: f1, axisFmt: f0 })
+  });
+
+  // BJR hanya SATU angka: tonase terjual ÷ janjang terjual berberat (sama dengan kolom BJR di sheet format terbaru).
+  // Bila sheet tidak punya kolom BJR, dipakai hitungan dari tonase & janjang terjual.
+  const bjrMain = has(d.bjr) ? d.bjr : (d.bjrSoldMonthly || []);
+  if (has(bjrMain)) T.push({
+    id: 'bjr', title: 'Berat Janjang Rata-rata (BJR)',
+    visual: 'garis BJR per bulan (kg per janjang) dengan garis putus-putus standar Marihat sesuai umur tanaman',
+    facts: describeSeries('BJR (tonase terjual ÷ janjang terjual yang ada beratnya)', 'kg', bjrMain, f2) +
+      (d.bjrSoldCum ? `\n- BJR rata-rata tertimbang seluruh periode: ${fmt(d.bjrSoldCum, 2)} kg` : ''),
+    fallback: fallbackInsight('BJR', 'kg', bjrMain, f2),
+    draw: b => {
+      const std = (d.bjrAcuan || []).map(a => ({ p: a.p, label: a.label, value: a.min }));
+      const stdAligned = bjrMain.map(x => { const m = std.find(z => mkey(z.p) === mkey(x.p)); return { p: x.p, label: x.label, value: m ? m.value : null }; });
+      const hasStd = stdAligned.some(x => x.value !== null);
+      drawLineChart(b, [{ series: bjrMain, color: C.GREEN, labels: true }]
+        .concat(hasStd ? [{ series: stdAligned, color: C.CHART_LIGHT, dashed: true, labels: false }] : []),
+        { labelFmt: f1, axisFmt: f0,
+          legend: [{ name: 'BJR (kg)', color: C.GREEN }]
+            .concat(hasStd ? [{ name: `Standar Marihat ${d.landClass} sesuai umur`, color: C.CHART_LIGHT, dashed: true }] : []) });
+    }
+  });
+
+  if (has(d.luasPanen)) T.push({
+    id: 'panen', section: 'Produktivitas Kebun', title: 'Produktivitas Kebun: Luas Panen',
+    visual: 'bar luas panen (ha) per bulan',
+    facts: describeSeries('Luas panen', 'ha', d.luasPanen, f2),
+    fallback: fallbackInsight('Luas panen', 'ha', d.luasPanen, f2),
+    draw: b => drawBarChart(b, d.luasPanen, { labelFmt: f0, axisFmt: f0 })
+  });
+
+  if (has(d.produksi)) T.push({
+    id: 'produksi', section: 'Produktivitas Kebun',
+    title: d.produksiActual && DECK_CONFIG.TONASE_BASIS === 'terjual' ? 'TBS Terjual per Bulan' : 'Produksi TBS',
+    visual: d.produksiActual ? 'bar tonase hasil panen aktual (ton) per bulan' : 'bar estimasi produksi TBS (ton) per bulan = yield × luas panen',
+    facts: describeSeries(!d.produksiActual ? 'Estimasi produksi TBS (yield × luas panen)' : DECK_CONFIG.TONASE_BASIS === 'terjual' ? 'TBS terjual (tonase hasil jual)' : 'Produksi TBS aktual', 'ton', d.produksi, f2) +
+      (d.produksiPanen ? `\n- estimasi produksi panen (janjang dipanen × BJR berbasis janjang terjual ${fmt(d.bjrSoldCum, 1)} kg): total ${fmt(seriesStats(d.produksiPanen).sum, 0)} ton` : '') +
+      `\n- total ${fmt(seriesStats(d.produksi).sum, 2)} ton selama ${d.produksi.length} bulan` +
+      (has(d.revenueTotal) ? `\n- estimasi penjualan TBS (${d.revenueBasis}): total ${fmtRp(seriesStats(d.revenueTotal).sum)}, tertinggi ${fmtRp(seriesStats(d.revenueTotal).max.value)} pada ${monthLong(seriesStats(d.revenueTotal).max.p)}` : ''),
+    fallback: fallbackInsight(d.produksiActual ? 'Produksi TBS' : 'Estimasi produksi TBS', 'ton', d.produksi, f0),
+    draw: b => drawBarChart(b, d.produksi, { labelFmt: f0, axisFmt: f0 })
+  });
+
+
+  const B = d.blocks;
+  if (B && B.classes.length) T.push({
+    id: 'umur', section: 'Umur Tanaman & Blok', title: 'Struktur Umur Tanaman Blok Dipanen',
+    visual: 'bar horizontal luas (ha) blok unik per kelas umur tanaman, dengan % luas',
+    facts: describeBlocks(d),
+    fallback: `${fmt(B.classes.reduce((m, c) => (c.value > m.value ? c : m)).pct, 0)}% luas blok dipanen berada di kelas ${B.classes.reduce((m, c) => (c.value > m.value ? c : m)).name}; ${B.replant.length} blok (${fmt(B.replant.reduce((s, b) => s + b.ha, 0), 1)} ha) sudah lewat umur ekonomis.`,
+    draw: b => drawHBarChart(b, B.classes, { labelFmt: v => `${fmt(v, 0)} ha` })
+  });
+
+  if (has(d.ageMonthly) && !d.snapshot) T.push({
+    id: 'umuryield', section: 'Umur Tanaman & Blok', title: 'Umur Rata-rata Blok yang Dipanen',
+    visual: 'bar umur rata-rata blok dipanen per bulan (tahun, tertimbang luas)',
+    facts: describeSeries('Umur rata-rata blok dipanen (tertimbang luas)', 'tahun', d.ageMonthly, f1) +
+      `\n- korelasi dengan yield: r = ${fmt(pearson(d.yield, d.ageMonthly), 2)}`,
+    fallback: fallbackInsight('Umur rata-rata blok dipanen', 'tahun', d.ageMonthly, f1),
+    draw: b => drawBarChart(b, d.ageMonthly, { labelFmt: f1, axisFmt: f0 })
+  });
+
+  if (B && B.replant.length) T.push({
+    id: 'replanting', section: 'Umur Tanaman & Blok', title: 'Kandidat Peremajaan (Replanting)',
+    visual: 'tabel blok berumur >25 tahun terluas: blok, luas, tahun tanam, umur, frekuensi panen',
+    facts: `Blok >25 tahun: ${B.replant.length} blok, ${fmt(B.replant.reduce((s, b) => s + b.ha, 0), 1)} ha dari ${fmt(B.totalHa, 1)} ha blok unik.\n` +
+      B.replant.slice(0, 10).map(b => `- ${b.name}: ${fmt(b.ha, 2)} ha, tanam ${b.year}, umur ${b.age} th, dipanen ${b.months} dari ${B.monthly.length} bulan`).join('\n'),
+    fallback: `${B.replant.length} blok seluas ${fmt(B.replant.reduce((s, b) => s + b.ha, 0), 1)} ha sudah berumur lebih dari 25 tahun; blok terluas ${B.replant[0].name} (${fmt(B.replant[0].ha, 2)} ha, tanam ${B.replant[0].year}).`,
+    draw: b => drawTable(b, ['Blok', 'Luas\nha', 'Tahun\ntanam', 'Umur\ntahun', 'Dipanen\nbulan'],
+      B.replant.slice(0, 9).map(x => [x.name, fmt(x.ha, 2), String(x.year), String(x.age), `${x.months}/${B.monthly.length}`]),
+      { colWidths: [2.6, 1.5, 1.6, 1.4, 1.6], fontSize: DECK_CONFIG.TYPE.TABLE_CELL, headerSize: DECK_CONFIG.TYPE.TABLE_HEADER, rowHeight: 25, headerHeight: 36, numCols: [1, 2, 3, 4] })
+  });
+
+  const up = upkeepItems(d);
+  if (up.length >= 2) T.push({
+    id: 'upkeep', section: 'Analisis Pengeluaran', title: 'Analisis Pengeluaran: Komposisi Upkeep Cost',
+    visual: `bar horizontal biaya perawatan per kelompok aktivitas (Rp jt dan % dari total), periode ${DECK_CONFIG.UPKEEP_ACTIVITY_PERIOD}`,
+    facts: describeUpkeep(up),
+    fallback: `${up[0].name} menyerap porsi upkeep terbesar, ${fmtRp(up[0].value)} (${fmtPct(up[0].pct, 0)} dari total upkeep cost).`,
+    draw: b => drawHBarChart(b, up, { scale: 1e6, labelFmt: v => `${fmt(v, 2)} jt` })
+  });
+
+  // Laba kotor per bulan: uang yang tersisa setelah biaya pekerja (pertanyaan utama owner di bagian keuangan)
+  if (has(d.profit)) T.push({
+    id: 'laba', title: 'Laba Kotor per Bulan',
+    visual: 'satu batang per bulan setinggi pendapatan (Rp juta), terbagi biaya pekerja (abu) dan laba kotor (hijau, angka di atas batang); bulan rugi berwarna merah di bawah nol',
+    facts: [describeSeries('Laba kotor sebelum biaya material (pendapatan − biaya pekerja)', '', d.profit, fmtRp),
+            describeSeries('Pendapatan tercatat', '', d.revenueIdr, fmtRp),
+            describeSeries('Total biaya pekerja', '', d.costTotal, fmtRp)].join('\n'),
+    fallback: fallbackInsight('Laba kotor sebelum biaya material', '', d.profit, fmtRp),
+    draw: b => drawProfitChart(b, d.revenueIdr, d.costTotal)
+  });
+
+  if (has(d.revKg)) T.push({
+    id: 'biayakg', section: 'Analisis Pengeluaran', title: 'Analisis Pengeluaran: Biaya per Kg TBS',
+    visual: 'garis pendapatan per kg (hijau) dan biaya pekerja per kg (merah putus-putus), Rp ribu',
+    facts: [describeSeries('Pendapatan / harga jual per kg TBS', '', d.revKg, rp), describeSeries('Biaya pekerja per kg TBS (panen + muat + perawatan)', '', d.upahKg, rp)].join('\n'),
+    fallback: fallbackInsight('Pendapatan per kg', '', d.revKg, rp),
+    draw: b => drawLineChart(b, [{ series: d.revKg, color: C.GREEN, labels: true }]
+      .concat(has(d.upahKg) ? [{ series: d.upahKg, color: C.DANGER, dashed: true, labels: false }] : []),
+      { scale: 1000, labelFmt: f1, axisFmt: v => `${fmt(v, 1)} rb`,
+        legend: [{ name: 'Pendapatan/kg (Rp rb)', color: C.GREEN }].concat(has(d.upahKg) ? [{ name: 'Biaya pekerja/kg', color: C.DANGER, dashed: true }] : []) })
+  });
+
+  if (has(d.upahRatio)) T.push({
+    id: 'efisiensi', section: 'Analisis Pengeluaran', title: 'Analisis Pengeluaran: Efisiensi Upah per Kg',
+    visual: 'garis porsi biaya pekerja terhadap harga jual per kg (%) per bulan',
+    facts: describeSeries('Porsi biaya pekerja terhadap harga jual per kg', '%', d.upahRatio, f1),
+    fallback: fallbackInsight('Porsi biaya pekerja terhadap harga jual', '%', d.upahRatio, f1),
+    draw: b => drawLineChart(b, [{ series: d.upahRatio, color: C.GREEN, labels: true }], { labelFmt: v => `${fmt(v, 1)}%`, axisFmt: v => `${fmt(v, 0)}%` })
+  });
+
+  if (has(d.revHa)) T.push({
+    id: 'biayaha', section: 'Analisis Pengeluaran', title: 'Analisis Pengeluaran: Pendapatan vs Biaya per Ha',
+    visual: 'bar pendapatan per ha (Rp jt) dengan garis biaya per ha (merah putus-putus)',
+    facts: [describeSeries('Pendapatan per ha', '', d.revHa, fmtRp), describeSeries('Biaya per ha', '', d.costHa, fmtRp),
+            describeSeries('Porsi biaya terhadap pendapatan per ha', '%', d.costRatio, f1),
+            up.length ? describeUpkeep(up) : ''].join('\n'),
+    fallback: fallbackInsight('Pendapatan per hektar', '', d.revHa, fmtRp),
+    draw: b => drawBarChart(b, d.revHa, {
+      scale: 1e6, labelFmt: f2, axisFmt: v => `${fmt(v, 0)} jt`,
+      extraLines: has(d.costHa) ? [{ series: d.costHa, color: C.DANGER, dashed: true }] : [],
+      legend: [{ name: 'Pendapatan/ha (Rp jt)', type: 'bar', color: C.GREEN }].concat(has(d.costHa) ? [{ name: 'Biaya/ha', color: C.DANGER, dashed: true }] : []) })
+  });
+
+  if (has(d.margin)) T.push({
+    id: 'margin', section: 'Analisis Pengeluaran', title: 'Analisis Pengeluaran: Margin per Ha',
+    visual: 'bar margin per ha (pendapatan - biaya, Rp jt); bulan negatif berwarna merah',
+    facts: describeSeries('Margin per ha (pendapatan - biaya)', '', d.margin, fmtRp),
+    fallback: fallbackInsight('Margin per hektar', '', d.margin, fmtRp),
+    draw: b => drawBarChart(b, d.margin, { scale: 1e6, labelFmt: f2, axisFmt: v => `${fmt(v, 0)} jt` })
+  });
+
+  const rawatEmpty = !d.rawat || !d.rawat.rows.length;
+  [['panen', d.mandorPanen], ['muat', d.mandorMuat]].forEach(([role, m]) => {
+    if (!m) return;
+    T.push({
+      id: `mandor${role}`, section: 'Produktivitas Pekerja', title: `Produktivitas Mandor ${role === 'panen' ? 'Panen' : 'Muat'}`,
+      visual: `bar berkelompok JJG/hari per mandor ${role} untuk ${m.periods.map(p => p.label).join(', ')}, dengan jumlah hari kerja di bawah bar`,
+      facts: describeMandor(role, m, d) + (role === 'panen' && rawatEmpty ? '\nTop mandor rawat: ANOMALI: data belum tersedia.' : ''),
+      fallback: mandorFallbackText(role, m) + (role === 'panen' && rawatEmpty ? ' Data mandor rawat belum tersedia.' : ''),
+      draw: b => drawMandorChart(b, m)
+    });
+  });
+
+  const F = d.flow;
+  if (F) {
+    T.push({
+      id: 'alurjjg', title: 'Alur Janjang: Panen sampai Terjual',
+      visual: `corong janjang kumulatif ${F.stages.map(x => x.name).join(' → ')} dengan selisih tiap tahap dan estimasi nilainya`,
+      facts: describeFlow(d),
+      fallback: F.worst
+        ? `Dari ${fmt(F.stages[0].total, 0)} janjang dipanen, ${fmt(F.lossJjg, 0)} (${fmt(F.lossPct, 0)}%) tidak sampai terjual${F.lossRp ? `, setara sekitar ${fmtRp(F.lossRp)}` : ''}. Selisih terbesar terjadi pada tahap ${F.worst.from} → ${F.worst.to}, yang dipegang ${F.worst.role}.`
+        : F.overSold
+          ? `Janjang terjual ${fmt(F.overSoldPct, 1)}% lebih banyak dari janjang dipanen selama ${F.months} bulan, artinya pencatatan panen belum lengkap. Kebocoran janjang belum bisa diukur sampai panen dicatat penuh.`
+          : `Janjang dipanen, dimuat, dan terjual relatif seimbang selama ${F.months} bulan; tidak terlihat kebocoran berarti.`,
+      draw: b => drawFlowFunnel(b, F)
+    });
+    if (F.monthlyGap.length >= 2) T.push({
+      id: 'restan', title: 'Selisih Panen vs Muat per Bulan',
+      visual: 'bar selisih janjang dipanen dikurangi janjang dimuat per bulan (positif = tertahan/hilang, negatif = muat melebihi panen)',
+      facts: [`Selisih janjang dipanen − dimuat per bulan (positif = tertahan/hilang/tidak tercatat dimuat; negatif = muat melebihi panen, biasanya mengejar restan bulan sebelumnya):`,
+        `- per bulan: ${F.monthlyGap.map(g => `${g.label} ${fmt(g.value, 0)}`).join(', ')}`,
+        `- kumulatif: ${F.monthlyGap.map(g => `${g.label} ${fmt(g.cum, 0)}`).join(', ')}`,
+        describeSignal(F.monthlyGap)].join('\n'),
+      fallback: (() => { const g = F.monthlyGap.slice().sort((a, b) => b.value - a.value)[0];
+        return `Selisih panen dan muat terbesar terjadi pada ${monthLong(g.p)} sebanyak ${fmt(g.value, 0)} janjang; selisih kumulatif akhir periode ${fmt(F.monthlyGap[F.monthlyGap.length - 1].cum, 0)} janjang.`; })(),
+      draw: b => drawBarChart(b, F.monthlyGap, { labelFmt: f0, axisFmt: f0 })
+    });
+  }
+
+  const RW = rawatTableRows(d);
+  if (RW) T.push({
+    id: 'rawat', title: 'Mandor Rawat',
+    visual: 'tabel mandor rawat: hari kerja bulan terakhir & pembanding, dan aktivitas utama beserta produktivitas per hari',
+    facts: describeRawat(d),
+    fallback: (() => { const top = RW.rows.slice().sort((a, b2) => (parseNum(b2[1]) || 0) - (parseNum(a[1]) || 0))[0];
+      return `${top[0]} paling aktif dengan ${top[1]} hari kerja rawat; aktivitas utamanya ${top[top.length - 1]}.`; })(),
+    draw: b => drawTable(b, RW.headers, RW.rows, { colWidths: RW.headers.length === 4 ? [1.8, 1.1, 1.1, 3.4] : [1.8, 1.1, 3.4],
+      fontSize: DECK_CONFIG.TYPE.TABLE_CELL, headerSize: DECK_CONFIG.TYPE.TABLE_HEADER, rowHeight: 25, headerHeight: 36, numCols: RW.numCols })
+  });
+  else if (!rawatEmpty) T.push({
+    id: 'rawat', title: 'Mandor Rawat',
+    visual: 'tabel mandor rawat dan jumlah hari rawat',
+    facts: describeTable('Top mandor rawat (jumlah hari rawat)', d.rawat),
+    fallback: `${d.rawat.rows[0][0]} mencatat ${d.rawat.rows[0][1]} hari rawat pada periode ini.`,
+    draw: b => drawTable(b, d.rawat.headers, d.rawat.rows)
+  });
+
+  // --- Janjang terjual tanpa berat & blok tanpa penjualan (kolom baru) ---
+  const NW = d.noWeight;
+  if (NW && NW.nwSum > 0) T.push({
+    id: 'tanpaberat', title: 'Janjang Terjual Tanpa Berat',
+    visual: 'bar bertumpuk per bulan: janjang terjual dengan berat (hijau) dan tanpa catatan berat (oranye)',
+    facts: describeNoWeight(d),
+    fallback: `${fmt(NW.nwSum, 0)} janjang (${fmt(NW.share, 0)}%) terjual tanpa catatan berat, setara ±${fmtRpShort(NW.rpSum)} yang tidak tercatat. Tertinggi ${monthLong(NW.worst.p)} (${fmt(NW.worst.share, 0)}%).`,
+    draw: b => drawStackedBarChart(b, [
+      { name: 'Terjual dengan berat', series: d.saleJjg, color: C.GREEN },
+      { name: 'Terjual tanpa berat', series: d.noWeightJjg, color: C.WARNING }], { labelFmt: f0, axisFmt: f0 })
+  });
+  const U = d.unsale;
+  if (U && U.blocks.length) T.push({
+    id: 'blokunsale', title: 'Blok Tanpa Penjualan',
+    visual: 'tabel blok yang paling sering tidak tercatat menjual janjang: blok, luas, tahun tanam, jumlah bulan tanpa penjualan, bulan terakhir',
+    facts: describeUnsale(d),
+    fallback: `${U.chronic.length || U.blocks.length} blok tidak tercatat menjual janjang selama beberapa bulan; terbanyak ${U.blocks[0].name} (${fmt(U.blocks[0].ha, 2)} ha) ${U.blocks[0].months} dari ${U.months} bulan.`,
+    draw: b => drawTable(b, ['Blok', 'Luas\nha', 'Tahun\ntanam', 'Tanpa penjualan\nbulan', 'Terakhir\nbulan'],
+      U.blocks.slice(0, 9).map(x => [x.name, fmt(x.ha, 2), x.year ? String(x.year) : '-', `${x.months}/${U.months}`, x.last ? monthShort(x.last) : '-']),
+      { colWidths: [2.4, 1.3, 1.3, 1.8, 1.4], fontSize: DECK_CONFIG.TYPE.TABLE_CELL, headerSize: DECK_CONFIG.TYPE.TABLE_HEADER, rowHeight: 25, headerHeight: 36, numCols: [1, 2, 3] })
+  });
+
+  // --- Komposisi biaya pekerja per bulan (panen / perawatan / muat) ---
+  // Tiga warna yang jelas berbeda: hijau (panen), kuning (perawatan), abu tua (muat).
+  // Komponen yang belum dicatat (kosong di semua bulan) tidak digambar dan tidak masuk legenda.
+  const costParts = [
+    { name: 'Panen', series: d.costHarvest, color: C.GREEN },
+    { name: 'Perawatan', series: d.costUpkeep, color: C.YELLOW },
+    { name: 'Muat', series: d.costLoad, color: C.MUTED }
+  ].filter(p => has(p.series));
+  if (costParts.length) T.push({
+    id: 'biayakomposisi', title: 'Komposisi Biaya Pekerja per Bulan',
+    visual: `bar bertumpuk biaya per bulan (Rp juta): ${costParts.map(p => p.name.toLowerCase()).join(', ')}`,
+    facts: [describeSeries('Total biaya pekerja', '', d.costTotal, fmtRp), describeSeries('Biaya panen', '', d.costHarvest, fmtRp),
+            describeSeries('Biaya perawatan (upkeep)', '', d.costUpkeep, fmtRp), describeSeries('Biaya muat', '', d.costLoad, fmtRp),
+            has(d.profit) ? describeSeries('Laba kotor sebelum biaya material (pendapatan − biaya pekerja)', '', d.profit, fmtRp) : '',
+            (d.featureNotes || []).length ? 'CATATAN FITUR: ' + d.featureNotes.join('; ') : ''].join('\n'),
+    fallback: fallbackInsight('Total biaya pekerja', '', d.costTotal, fmtRp),
+    draw: b => drawStackedBarChart(b, costParts, { scale: 1e6, labelFmt: f1, axisFmt: v => `${fmt(v, 0)} jt` })
+  });
+
+  T.push({ id: 'anomali', kind: 'anomali', title: 'Anomali yang Perlu Ditindaklanjuti',
+    visual: 'tabel lebar: temuan | data/bukti | mengapa penting | tindak lanjut', facts: '', fallback: '' });
+  T.push({ id: 'kesimpulan', kind: 'conclusion', section: 'Rekomendasi', title: 'Kesimpulan & Rekomendasi', visual: 'kartu aksi untuk owner', facts: '', fallback: '' });
+  // Hanya 1 bulan data: grafik bulanan tidak bermakna -> cukup tabel kinerja; slide tren dilewati
+  if (d.months < 2) {
+    const trendOnly = ['produksi', 'panen', 'yield', 'jjg', 'laba', 'biayakg', 'efisiensi', 'biayaha', 'margin', 'biayakomposisi'];
+    for (let i = T.length - 1; i >= 0; i--) if (trendOnly.indexOf(T[i].id) >= 0) T.splice(i, 1);
+  }
+  // Seri utama tiap slide -> sinyal otomatis (tren/posisi/volatilitas) sebagai pilihan jawaban tetap
+  const PRIMARY = { tanpaberat: d.noWeight ? d.noWeight.series : [], biayakomposisi: d.costTotal || [], laba: d.profit || [],
+                    restan: d.flow ? d.flow.monthlyGap : [], produksi: d.produksi, panen: d.luasPanen, yield: d.yield, jjg: d.jjgHa, bjr: d.bjr, umuryield: d.ageMonthly,
+                    biayakg: d.revKg, efisiensi: d.upahRatio, biayaha: d.revHa, margin: d.margin };
+  T.forEach(t => { if (PRIMARY[t.id] && PRIMARY[t.id].length) t.signal = signals(PRIMARY[t.id]); });
+  // marihat & tabel kinerja tidak memakai sinyal tren
+  return applyStory(T);
+}
+
+
+
+/**
+ * Kumpulkan anomali yang dideteksi script dari fakta tiap slide + cek konsistensi antar-tabel.
+ * [{page, slide, text}]
+ */
+function detectAnomalies(topics, data) {
+  const out = [];
+  const push = (t, text) => { if (out.length < 80 && !out.some(o => o.text === text)) out.push({ page: t ? t.page : null, slide: t ? t.title : '-', text }); };
+  topics.forEach(t => {
+    String(t.facts || '').split('\n').forEach(l => {
+      if (/ANOMALI|PERLU DICEK|TIDAK KONSISTEN|NEGATIF/.test(l)) push(t, l.replace(/^[-\s]+/, ''));
+    });
+  });
+  const byId = id => topics.find(x => x.id === id);
+  describeRelations(data).split('\n').forEach(line => {
+    let l = line;
+    if (!/ANOMALI|TIDAK KONSISTEN|PERLU DICEK/.test(l)) return;
+    l = l.replace(/^[-\s]+/, '');
+    const t = /TIDAK BISA DIUKUR|tidak ada janjang terjual tercatat/.test(l) && byId('alurjjg') ? byId('alurjjg')
+      : /tanpa catatan berat/i.test(l) && byId('tanpaberat') ? byId('tanpaberat')
+      : /tidak tercatat menjual/i.test(l) && byId('blokunsale') ? byId('blokunsale')
+      : /kebocoran janjang|tabel alur|melebihi dipanen|melebihi dimuat|melebihi masuk trip/i.test(l) && byId('alurjjg') ? byId('alurjjg') : /produktivitas baru/.test(l) ? byId('marihat') : /upah/.test(l) ? (byId('efisiensi') || byId('biayakg')) : /pendapatan/.test(l) ? byId('biayaha') : /BJR/.test(l) ? byId('bjr')
+      : /luas panen/.test(l) ? byId('panen') : /harga/.test(l) ? byId('biayakg') : byId('yield');
+    push(t, l);
+  });
+  // Panen vs muat per bulan (risiko restan)
+  const mp = data.mandorPanen, mm = data.mandorMuat;
+  if (mp && mm && !data.flow) {
+    mp.periods.forEach((p, i) => {
+      if (p.partial) return;
+      const j = mm.periods.findIndex(q => q.label === p.label);
+      if (j < 0) return;
+      const tp = mp.rows.reduce((s, r) => s + ((r.vals[i] && r.vals[i].total) || 0), 0);
+      const tm = mm.rows.reduce((s, r) => s + ((r.vals[j] && r.vals[j].total) || 0), 0);
+      if (tp && tm < tp * DECK_CONFIG.THRESHOLDS.MUAT_VS_PANEN) push(byId('mandormuat'), `PERLU DICEK: ${p.label} janjang dipanen ${fmt(tp, 0)} JJG tetapi tercatat dimuat ${fmt(tm, 0)} JJG (${fmtPct((tm / tp) * 100, 0)}); risiko restan atau data muat belum lengkap.`);
+    });
+  }
+  const missing = checkDataCompleteness(data);
+  if (missing.length) push({ page: null, title: 'Kelengkapan data' }, `ANOMALI: data belum tersedia di sheet: ${missing.join(', ')}.`);
+  if (data.partialMonth) push(null, `${data.partialMonth} bulan berjalan, belum lengkap dan tidak dianalisis.`);
+  // Prioritas bisnis: inkonsistensi > rugi > BJR/upah tidak wajar > restan > harga tetap > angka menyimpang > data kosong
+  const rank = a => /ANOMALI DATA|TIDAK KONSISTEN/.test(a.text) ? 1 : /NEGATIF/.test(a.text) ? 2
+    : /kebocoran janjang|tanpa catatan berat|TIDAK BISA DIUKUR|tidak ada janjang terjual tercatat/.test(a.text) ? 2 : /tidak tercatat menjual/.test(a.text) ? 3 : /acuan umur|melebihi harga|produktivitas baru/.test(a.text) ? 3 : /restan|melebihi dipanen/.test(a.text) ? 4 : /persis sama/.test(a.text) ? 5
+    : /bulan berjalan/.test(a.text) ? 9 : /belum tersedia|belum dicatat|kosong pada|tercatat 0|NOL/.test(a.text) ? 7 : 6;
+  return out.sort((a, b) => rank(a) - rank(b));
+}
+
+/**
+ * ALUR CERITA: pertanyaan dan relasi tiap slide diatur di sini (bukan oleh AI) agar selalu runut.
+ * Urutan slide di deck mengikuti MAIN_GROUPS; penghubung (prev) dihitung ulang dari urutan itu saat generate.
+ */
+// Deskripsi bagian: satu baris di Daftar Isi (judul 21px, deskripsi 17px; ±30 karakter pada slide 720pt)
+const SECTION_DESC = {
+  'Introduction': 'Temuan utama dan angka kunci',
+  'Ringkasan Eksekutif': 'Temuan utama dan angka kunci',
+  'Kinerja Bulan Ini': 'Hasil, uang masuk, biaya, laba',
+  'Hasil Produksi': 'Produksi, yield, vs Marihat',
+  'Faktor Penentu Yield': 'Jumlah dan berat janjang',
+  'Kondisi Tanaman': 'Umur blok dan peremajaan',
+  'Tenaga Kerja': 'Produktivitas mandor',
+  'Kebocoran Janjang': 'Dari panen sampai terjual',
+  'Keuangan Kebun': 'Harga, biaya, dan laba',
+  'Anomali Data': 'Angka janggal yang perlu dicek',
+  'Rekomendasi': 'Tindakan prioritas untuk owner'
+};
+
+
+/**
+ * DECK UTAMA untuk estate owner (maks. 10 slide), urut sesuai pertanyaan owner:
+ *   1. Bagaimana bulan ini? (hasil, uang masuk, biaya, laba)   -> Kinerja Bulan Ini
+ *   2. Ada uang yang hilang?                                    -> Kebocoran Janjang
+ *   3. Mengapa hasil naik/turun?                                -> Penyebab Naik-Turun Hasil
+ *   4. Ke mana uang keluar dan berapa sisanya per bulan?        -> Keuangan Kebun
+ *   5. Bagaimana kinerja orangnya?                              -> Tim Kerja
+ *   lead    = topik yang tampil di slide utama dan TIDAK diulang di lampiran.
+ *   members = slide detail (lampiran) yang dirangkum; chart = urutan pilihan grafik bila tidak ada lead.
+ */
+const MAIN_GROUPS = [
+  { id: 'm_kinerja', title: 'Kinerja Bulan Ini', lead: 'scorecard', members: ['produksi', 'panen', 'yield', 'marihat'], chart: ['produksi', 'yield', 'panen'],
+    question: 'Bagaimana hasil dan uang kebun bulan ini: berapa ton terjual, berapa uang masuk, dan berapa yang tersisa?' },
+  { id: 'm_kebocoran', title: 'Kebocoran Janjang', members: ['alurjjg', 'tanpaberat', 'blokunsale', 'restan'], chart: ['alurjjg', 'tanpaberat', 'restan'],
+    question: 'Berapa janjang atau uang yang hilang antara panen dan penjualan, dan di mana hilangnya?' },
+  { id: 'm_penyebab', title: 'Penyebab Naik-Turun Hasil', members: ['jjg', 'bjr', 'umur', 'umuryield', 'replanting'], chart: ['bjr', 'jjg', 'umur'],
+    question: 'Apa penyebab utama hasil per hektar naik, turun, atau rendah: jumlah janjang, berat janjang (BJR), atau umur tanaman?' },
+  { id: 'm_keuangan', title: 'Keuangan Kebun', members: ['laba', 'biayakomposisi', 'biayakg', 'efisiensi', 'biayaha', 'upkeep', 'margin'], chart: ['laba', 'biayaha', 'biayakomposisi', 'margin', 'biayakg'],
+    question: 'Berapa uang yang tersisa setiap bulan setelah biaya pekerja, dan apa yang membuatnya turun atau rugi?' },
+  { id: 'm_tim', title: 'Tim Kerja', members: ['mandorpanen', 'mandormuat', 'rawat'], chart: ['mandorpanen', 'mandormuat', 'rawat'],
+    question: 'Apakah tim panen, muat, dan rawat bekerja cukup produktif dan merata?' }
+];
+
+/**
+ * Judul otomatis dari data (dipakai bila AI gagal atau judulnya terlalu panjang).
+ * Setiap judul menjawab pertanyaan slide dengan angka; null = tidak ada jawaban yang pasti dari data.
+ */
+function dataHeadline(id, d) {
+  const T = DECK_CONFIG.THRESHOLDS, M = d.marihat, F = d.flow, N = d.noWeight, B = d.blocks, U = d.unsale;
+  const pct = v => `${fmt(v * 100, 0)}%`;
+  const kebocoran = () => {
+    if (F && F.lossJjg && F.lossPct >= T.FLOW_LOSS_PCT) return [`${fmt(F.lossPct, 0)}% janjang dipanen tidak sampai terjual`];
+    if (N && N.share > T.NOWEIGHT_PCT) return [`${fmt(N.share, 0)}% janjang terjual tanpa catatan berat`];
+    if (F && F.overSold) return ['Kebocoran belum terukur, catatan panen kurang', 'Kebocoran janjang belum dapat diukur'];
+    if (F) return ['Janjang dipanen tercatat sampai terjual'];
+    return null;
+  };
+  const penyebab = () => {
+    if (M && M.achTon < 0.9) {
+      if (M.achBjr && (!M.achRjt || M.achBjr <= M.achRjt)) return [`Hasil rendah: BJR ${fmt(M.realBjr, 1)} kg, ${pct(M.achBjr)} dari standar`, `Hasil rendah: BJR ${pct(M.achBjr)} dari standar`];
+      if (M.achRjt) return [`Hasil rendah: janjang per pokok ${pct(M.achRjt)} dari standar`, `Hasil rendah: janjang/pokok ${pct(M.achRjt)} standar`];
+    }
+    if (M) return [`Hasil ${pct(M.achTon)} dari standar Marihat`];
+    return null;
+  };
+  const laba = () => {
+    const p = seriesStats(d.profit);
+    if (!p) return null;
+    const avg = `Rp${fmt(p.avg / 1e6, 0)} juta`;
+    if (p.negatives.length) return [`Laba ${avg} per bulan, rugi pada ${monthLong(p.negatives[0].p)}`, `Laba ${avg} per bulan, sempat rugi`];
+    return [`Laba kotor rata-rata Rp${fmt(p.avg / 1e6, 1)} juta per bulan`, `Laba kotor rata-rata ${avg} per bulan`];
+  };
+  const H = {
+    m_kinerja: () => {
+      const s2 = seriesStats(d.produksi);
+      if (!s2) return null;
+      const ton = `${fmt(s2.last.value, s2.last.value < 100 ? 1 : 0)} ton`;
+      const lp = seriesStats(d.profit) ? valAt(d.profit, s2.last.p) : null;
+      const laba2 = lp !== null && lp !== undefined ? `laba Rp${fmt(lp / 1e6, 1)} juta` : '';
+      return laba2 ? [`${monthLong(s2.last.p)}: ${ton} terjual, ${laba2}`, `${ton} TBS terjual, ${laba2}`]
+                   : [`${monthLong(s2.last.p)}: ${ton} TBS terjual`, `${ton} TBS terjual`];
+    },
+    m_kebocoran: kebocoran,
+    alurjjg: () => (F && F.lossJjg && F.lossPct >= T.FLOW_LOSS_PCT ? kebocoran() : F && F.overSold ? kebocoran() : null),
+    tanpaberat: () => (N && N.nwSum ? [`${fmt(N.share, 0)}% janjang terjual tanpa catatan berat`] : null),
+    blokunsale: () => (U && U.chronic.length ? [`${U.chronic.length} blok dipanen tanpa penjualan tercatat`] : null),
+    m_penyebab: penyebab,
+    marihat: () => (M ? [`Hasil baru ${pct(M.achTon)} dari standar Marihat`] : null),
+    bjr: () => (M && M.achBjr ? [`BJR ${fmt(M.realBjr, 1)} kg, ${pct(M.achBjr)} dari standar umur`] : null),
+    replanting: () => (B && B.replant.length ? [`${B.replant.length} blok (${fmt(B.replant.reduce((x, b) => x + b.ha, 0), 0)} ha) lewat umur ekonomis`] : null),
+    m_keuangan: laba,
+    laba: laba,
+    m_tim: () => {
+      const mp = d.mandorPanen;
+      if (!mp || mp.rows.length < 2) return null;
+      const li = mp.periods.map((p, i) => (p.partial ? null : i)).filter(i => i !== null).pop() || 0;
+      const r = mp.rows.map(x => x.vals[li] && x.vals[li].rate).filter(Boolean);
+      if (r.length < 2) return null;
+      const ratio = Math.max.apply(null, r) / Math.min.apply(null, r);
+      return ratio >= 1.3 ? [`Pemanen terbaik ${fmt(ratio, 1)}× lebih produktif`] : ['Produktivitas mandor panen relatif merata'];
+    }
+  };
+  try {
+    const list = H[id] ? H[id]() : null;
+    return (list || []).find(h => h && titleFits(h)) || null;
+  } catch (e) { return null; }
+}
+
+/** Judul slide temuan: jumlah temuan + temuan terbesar bila muat satu baris. */
+function anomalyHeadline(rows, fallback) {
+  if (!rows || !rows.length) return fallback;
+  const top = String(rows[0].finding || '').replace(/\s*\(.*\)$/, '').trim();
+  const h = top ? `${rows.length} temuan, terbesar: ${top.charAt(0).toLowerCase()}${top.slice(1)}` : '';
+  return h && titleFits(h) ? h : `${rows.length} temuan data yang perlu dicek owner`;
+}
+
+/** Judul slide rekomendasi: jumlah tindakan + tindakan pertama bila muat satu baris. */
+function conclusionHeadline(actions, fallback) {
+  if (!actions || !actions.length) return fallback;
+  const first = String(actions[0].title || '').trim();
+  const h = first ? `Prioritas: ${first.charAt(0).toLowerCase()}${first.slice(1)}` : '';
+  return h && titleFits(h) ? h : `${actions.length} tindakan prioritas untuk owner`;
+}
+
+/**
+ * Grafik laba kotor yang menjelaskan dirinya sendiri: satu batang per bulan setinggi PENDAPATAN,
+ * dibagi biaya pekerja (abu, bawah) dan laba kotor (hijau, atas; angkanya di atas batang).
+ * Bulan rugi (biaya > pendapatan): batang abu setinggi pendapatan + batang merah di bawah nol sebesar ruginya.
+ * Memakai primitif SlideBatch & kerangka chFrame dari file 6.
+ */
+function drawProfitChart(b, rev, cost) {
+  const C = DECK_CONFIG.COLOR, A = DECK_CONFIG.LAYOUT.CONTENT, W = DECK_CONFIG.WEIGHT;
+  const base = rev;
+  const R = base.map(x => (x.value === null ? null : x.value / 1e6));
+  const K = base.map(x => { const v = valAt(cost, x.p); return v === null || v === undefined ? null : v / 1e6; });
+  const P = R.map((r, i) => (r === null || K[i] === null ? null : r - K[i]));
+  const all = finite(R.concat(K).concat(P));
+  if (!all.length) return;
+  const scale = niceScale(Math.min.apply(null, all), Math.max.apply(null, all));
+  const f = chFrame(b, base, scale, v => `${fmt(v, 0)} jt`);
+  const bw = f.step * CH.BAR_RATIO, y0 = f.yOf(0), lw = Math.max(f.step + 8, 36);
+  let anyLoss = false;
+  base.forEach((x, i) => {
+    const cx = f.x0 + f.step * (i + 0.5), r = R[i], k = K[i], p = P[i];
+    if (p === null) { b.label('n/a', cx, y0 - 16, 40, { color: C.MUTED }); return; }
+    const covered = Math.max(0, Math.min(k, r));                               // bagian pendapatan yang terpakai biaya
+    if (covered > 0) b.rect(cx - bw / 2, f.yOf(covered), bw, y0 - f.yOf(covered), C.NEUTRAL);
+    if (p >= 0) {
+      const yTop = f.yOf(r), h = f.yOf(covered) - yTop;
+      if (h > 0) b.rect(cx - bw / 2, yTop, bw, h, C.GREEN);
+      b.label(fmt(p, 1), cx, yTop - 15, lw, { weight: W.HEAVY, color: C.GREEN });
+    } else {
+      anyLoss = true;
+      const yBot = f.yOf(p);
+      b.rect(cx - bw / 2, y0, bw, yBot - y0, C.DANGER);
+      b.label(fmt(p, 1), cx, yBot + 1, lw, { weight: W.HEAVY, color: C.DANGER });
+    }
+  });
+  // Legenda: warna selalu disertai kata; baris kedua menjelaskan arti tinggi batang
+  const items = [{ name: 'Biaya pekerja', color: C.NEUTRAL }, { name: 'Laba kotor', color: C.GREEN }]
+    .concat(anyLoss ? [{ name: 'Rugi', color: C.DANGER }] : []);
+  let lx = A.left + CH.PAD_LEFT + 6;
+  const ly = A.top + 4;
+  items.forEach(it => {
+    b.rect(lx, ly - 4, 10, 8, it.color);
+    const w = it.name.length * 4.8 + 18;
+    b.label(it.name, lx + 20, ly - 7, w, { align: 'START', color: C.MUTED });
+    lx += 20 + w + 8;
+  });
+  b.label('Tinggi batang = pendapatan (Rp juta); angka = laba kotor', A.left + CH.PAD_LEFT + 6, ly + 8, 300, { align: 'START', color: C.MUTED });
+}
+
+/** Nama pendek slide lampiran untuk tombol (maks. ±18 karakter) dan Daftar Lampiran. */
+const SHORT_TITLES = {
+  scorecard: 'Kinerja', produksi: 'Tren TBS terjual', panen: 'Luas panen', yield: 'Yield per ha', marihat: 'Std. Marihat',
+  jjg: 'Janjang/ha', bjr: 'BJR', umur: 'Umur tanaman', umuryield: 'Umur vs yield', replanting: 'Replanting',
+  alurjjg: 'Alur janjang', restan: 'Panen vs muat', tanpaberat: 'Tanpa berat', blokunsale: 'Blok tanpa jual',
+  laba: 'Laba kotor', biayakg: 'Biaya per kg', efisiensi: 'Porsi biaya', biayakomposisi: 'Komposisi biaya', biayaha: 'Biaya per ha',
+  upkeep: 'Perawatan', margin: 'Margin per ha', mandorpanen: 'Mandor panen', mandormuat: 'Mandor muat', rawat: 'Mandor rawat'
+};
+function shortTitle(t, long) { return long ? t.title : (SHORT_TITLES[t.id] || t.title); }
+
+/** Tinggi kartu INSIGHT (rumus sama dengan fitInsightCard) untuk menempatkan tombol lampiran di bawahnya. */
+function insightCardHeight(text) {
+  const L = DECK_CONFIG.LAYOUT, T = DECK_CONFIG.TYPE, I = L.INSIGHT;
+  const lines = estLines(text, T.BODY, I.width - 2 * I.padX);
+  return Math.min(I.height, I.padTop + T.EYEBROW * 1.3 + 6.75 + lines * T.BODY * 1.6 + I.padBottom);
+}
+
+/** Insight cadangan slide ringkasan: kalimat pertama dari 2 topik terpenting (maks. 220 karakter). */
+function fallbackMainInsight(m) {
+  const first = t => String(t.fallback || '').split(/(?<=\.)\s/)[0];
+  return trimToSentence([m.chartTopic].concat(m.members.filter(t => t !== m.chartTopic)).slice(0, 2).map(first).join(' '), AI_LIMITS.MAIN_INSIGHT_MAX_CHARS);
+}
+function fallbackMainNotes(m) {
+  return `${m.title}: ${[m.lead].concat(m.members).filter(Boolean).map(t => String(t.fallback || '')).join(' ')}`.slice(0, AI_LIMITS.NOTES_MAX_CHARS);
+}
+
+const STORY = [
+  { id: 'scorecard', section: 'Kinerja Bulan Ini', title: null,
+    q: 'Bagaimana kebun bulan ini: berapa TBS terjual, berapa uang masuk, berapa biaya pekerja, dan berapa yang tersisa?',
+    link: 'Pembuka setelah Ringkasan Eksekutif: semua angka penting bulan laporan dalam satu tabel, dibandingkan dengan bulan lalu dan rata-rata.' },
+  { id: 'produksi', section: 'Hasil Produksi', title: null,
+    q: 'Bagaimana tren ton TBS terjual dari bulan ke bulan?',
+    link: 'Rincian baris TBS terjual pada tabel kinerja: trennya selama periode. Produksi = luas panen × yield, dua komponen ini dibahas berikutnya.' },
+  { id: 'panen', section: 'Hasil Produksi', title: 'Luas Panen',
+    q: 'Seberapa luas area yang dipanen, dan apakah itu yang menggerakkan naik-turun produksi?',
+    link: 'Komponen pertama produksi pada slide sebelumnya.' },
+  { id: 'yield', section: 'Hasil Produksi', title: 'Yield per Hektar',
+    q: 'Berapa hasil per hektar, dan apakah produktivitasnya ikut naik saat luas panen naik?',
+    link: 'Komponen kedua produksi: hasil per hektar dari luas panen pada slide sebelumnya.' },
+  { id: 'marihat', section: 'Hasil Produksi', title: 'Pencapaian vs Standar Marihat',
+    q: 'Seberapa jauh hasil kebun dari potensi standar Marihat (PPKS) untuk umur tanaman dan kelas lahannya?',
+    link: 'Yield dibandingkan dengan potensi standar Marihat sesuai umur blok, sehingga terlihat besar peluang yang belum tergarap.' },
+  { id: 'alurjjg', section: 'Kebocoran Janjang', title: 'Alur Janjang: Panen sampai Terjual',
+    q: 'Dari janjang yang dipanen, berapa yang benar-benar terjual, dan di tahap mana janjang tertahan atau hilang?',
+    link: 'Setelah melihat hasil bulan ini, ditelusuri berapa janjang yang dipanen benar-benar menjadi uang dan di tahap mana janjang tertahan atau hilang.' },
+  { id: 'tanpaberat', section: 'Kebocoran Janjang', title: 'Janjang Terjual Tanpa Berat',
+    q: 'Berapa janjang terjual yang tidak dicatat beratnya, dan berapa nilainya?',
+    link: 'Janjang yang sampai terjual pun belum tentu tercatat beratnya; tanpa berat, tonase dan pendapatan tampak lebih kecil.' },
+  { id: 'blokunsale', section: 'Kebocoran Janjang', title: 'Blok Tanpa Penjualan',
+    q: 'Blok mana yang berulang kali tidak tercatat menjual janjang?',
+    link: 'Menelusuri kebocoran sampai ke tingkat blok: blok yang dipanen tetapi tidak tercatat menjual.' },
+  { id: 'restan', section: 'Kebocoran Janjang', title: 'Selisih Panen vs Muat per Bulan',
+    q: 'Bulan apa janjang paling banyak tertahan antara panen dan muat?',
+    link: 'Rincian per bulan dari tahap panen ke muat pada corong alur janjang.' },
+  { id: 'jjg', section: 'Faktor Penentu Yield', title: 'Janjang Terjual per Hektar',
+    q: 'Berapa janjang terjual per hektar luas panen, dan apakah berubah?',
+    link: 'Mengapa hasil naik-turun: yield = JJG/ha × BJR. Dilihat dulu jumlah tandan per hektar.' },
+  { id: 'bjr', section: 'Faktor Penentu Yield', title: 'Berat Janjang Rata-rata (BJR)',
+    q: 'Apakah berat tiap tandan berubah?',
+    link: 'Faktor kedua yield: berat tandan. Bersama JJG/ha pada slide sebelumnya, keduanya menjelaskan yield.' },
+  { id: 'umur', section: 'Kondisi Tanaman', title: 'Struktur Umur Tanaman',
+    q: 'Seberapa tua tanaman di blok-blok yang dipanen?',
+    link: 'Mengapa JJG/ha dan BJR seperti itu: umur tanaman menentukan jumlah dan berat tandan.' },
+  { id: 'umuryield', section: 'Kondisi Tanaman', title: 'Umur Blok Dipanen per Bulan',
+    q: 'Apakah bulan yang didominasi blok tua menghasilkan yield lebih rendah?',
+    link: 'Menghubungkan struktur umur (slide sebelumnya) dengan yield bulanan.' },
+  { id: 'replanting', section: 'Kondisi Tanaman', title: 'Kandidat Peremajaan (Replanting)',
+    q: 'Blok mana yang sudah lewat umur ekonomis dan perlu direncanakan peremajaannya?',
+    link: 'Tindak lanjut dari struktur umur: daftar blok berumur lebih dari 25 tahun.' },
+  { id: 'laba', section: 'Keuangan Kebun', title: 'Laba Kotor per Bulan',
+    q: 'Berapa uang yang tersisa setiap bulan setelah biaya pekerja, dan bulan mana yang paling rendah?',
+    link: 'Dari hasil dan kebocoran ke uang: pendapatan dikurangi biaya pekerja setiap bulan (belum termasuk biaya material).' },
+  { id: 'biayakomposisi', section: 'Keuangan Kebun', title: 'Komposisi Biaya Pekerja per Bulan',
+    q: 'Biaya pekerja paling banyak untuk panen, perawatan, atau muat, dan bulan mana yang melonjak?',
+    link: 'Rincian sisi biaya dari laba kotor pada slide sebelumnya: dari mana biaya pekerja berasal.' },
+  { id: 'biayakg', section: 'Keuangan Kebun', title: 'Harga Jual dan Biaya Pekerja per Kg',
+    q: 'Berapa harga jual setiap kg TBS dan berapa biaya pekerja per kg?',
+    link: 'Biaya pekerja dibandingkan per kg dengan harga jual TBS.' },
+  { id: 'efisiensi', section: 'Keuangan Kebun', title: 'Porsi Biaya Pekerja terhadap Harga Jual',
+    q: 'Berapa persen harga jual yang terpakai untuk biaya pekerja?',
+    link: 'Membandingkan dua garis pada slide sebelumnya dalam satu angka persentase.' },
+  { id: 'biayaha', section: 'Keuangan Kebun', title: 'Pendapatan vs Biaya per Hektar',
+    q: 'Berapa pendapatan dan biaya setiap hektar per bulan?',
+    link: 'Pendapatan/ha = yield × harga jual; dibandingkan dengan biaya per hektar.' },
+  { id: 'upkeep', section: 'Keuangan Kebun', title: 'Biaya Perawatan per Aktivitas',
+    q: 'Ke mana biaya perawatan paling banyak dibelanjakan (menurut kelompok aktivitas)?',
+    link: 'Rincian isi biaya perawatan.' },
+  { id: 'margin', section: 'Keuangan Kebun', title: 'Margin per Hektar',
+    q: 'Berapa sisa uang per hektar setelah biaya, dan bulan mana yang merugi?',
+    link: 'Hasil akhir keuangan per hektar: pendapatan dikurangi biaya.' },
+  { id: 'mandorpanen', section: 'Tenaga Kerja', title: 'Produktivitas Mandor Panen',
+    q: 'Seberapa produktif tim panen dalam 3 bulan terakhir?',
+    link: 'Selain kondisi tanaman dan biaya, jumlah janjang yang terambil juga ditentukan tim yang memanen.' },
+  { id: 'mandormuat', section: 'Tenaga Kerja', title: 'Produktivitas Mandor Muat',
+    q: 'Apakah kapasitas muat mengimbangi janjang yang dipanen?',
+    link: 'Janjang yang dipanen (slide sebelumnya) harus segera dimuat agar tidak restan.' },
+  { id: 'rawat', section: 'Tenaga Kerja', title: 'Mandor Rawat',
+    q: 'Aktivitas perawatan apa yang dikerjakan, berapa hari, dan seberapa produktif?',
+    link: 'Perawatan (pemupukan, pruning, semprot) menentukan jumlah dan berat janjang bulan-bulan berikutnya.' },
+  { id: 'anomali', section: 'Anomali Data', title: 'Anomali yang Perlu Ditindaklanjuti',
+    q: 'Angka mana yang janggal, mengapa penting, dan apa yang harus dicek owner?',
+    link: 'Setelah seluruh rantai produksi sampai keuangan dibahas, dikumpulkan angka-angka yang tidak wajar atau tidak konsisten.' },
+  { id: 'kesimpulan', section: 'Rekomendasi', title: 'Kesimpulan & Rekomendasi',
+    q: 'Apa yang perlu dilakukan owner?', link: 'Merangkum seluruh rantai sebab-akibat menjadi tindakan.' }
+];
+
+function applyStory(topics) {
+  const out = [];
+  STORY.forEach(s => {
+    const t = topics.find(x => x.id === s.id);
+    if (!t) return;
+    t.section = s.section;
+    if (s.title) t.title = s.title;
+    t.question = s.q;
+    t.link = s.link;
+    out.push(t);
+  });
+  topics.filter(t => out.indexOf(t) < 0).forEach(t => out.push(t));   // topik tambahan di akhir
+  for (let i = 0; i < out.length; i++) out[i].prev = i > 0 ? out[i - 1] : null;
+  return out;
+}
+
+/** Teks penghubung default (dipakai bila AI gagal). */
+function fallbackBridge(t) {
+  return t.prev ? `Dari slide ${t.prev.page} (${t.prev.title}): ${t.link}` : t.link;
+}
+
+function toRoman(n) {
+  return ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X', 'XI', 'XII'][n - 1] || String(n);
+}
+
+/** Sorotan kuning label "Bagian I" dipersempit mengikuti panjang teks (SectionLabel CBR, padding 6px). */
+function fitSectionLabel(slide, label) {
+  const S = DECK_CONFIG.LAYOUT.SECTION_TEXT;
+  const w = estWidth(label, DECK_CONFIG.TYPE.SECTION_LABEL, true) + 6.75 + 2 * DECK_CONFIG.TEXT_INSET.X;
+  slide.getShapes().forEach(sh => {
+    try {
+      // hanya kotak sorotan kuning (baris paling atas), bukan judul bagian
+      if (Math.abs(sh.getTop() - S.top) < 2 && sh.getText().asString().trim() === label) sh.setWidth(w);
+    } catch (e) { /* abaikan */ }
+  });
+}
+
+function stripBold(t) { return String(t || '').replace(/\*\*/g, ''); }
+
+/**
+ * Ganti placeholder dengan teks; bagian **...** ditebalkan (ink, Bold) sesuai aturan CBR
+ * ("bold satu atau dua angka kunci"). Gaya teks lain mengikuti placeholder.
+ */
+function writeWithBold(slide, placeholder, text) {
+  const plain = stripBold(text);
+  const ranges = [];
+  let pos = 0;
+  String(text || '').split('**').forEach((part, i) => { if (i % 2 === 1 && part) ranges.push([pos, pos + part.length]); pos += part.length; });
+  const shape = slide.getShapes().find(sh => { try { return sh.getText().asString().indexOf(placeholder) >= 0; } catch (e) { return false; } });
+  slide.replaceAllText(placeholder, plain);
+  if (!shape) return;
+  const tr = shape.getText();
+  const base = tr.asString().indexOf(plain);
+  if (base < 0) return;
+  ranges.slice(0, 3).forEach(([a, b]) => {
+    try { tr.getRange(base + a, base + b).getTextStyle().setFontFamilyAndWeight(DECK_CONFIG.FONT.BODY, DECK_CONFIG.WEIGHT.TITLE).setForegroundColor(DECK_CONFIG.COLOR.INK); }
+    catch (e) { /* abaikan */ }
+  });
+}
+
+/**
+ * InsightCard mengikuti panjang teks dan menempel ke atas (tidak meregang setinggi tabel):
+ * tinggi = padding atas 28px + label + 12px + teks + padding bawah 36px.
+ * Kartu dikenali dari posisi kiri DAN atas serta isinya kosong, agar tombol lampiran
+ * (juga ROUND_RECTANGLE di kolom yang sama) tidak ikut diubah tingginya.
+ */
+function fitInsightCard(slide, text) {
+  const L = DECK_CONFIG.LAYOUT, T = DECK_CONFIG.TYPE, I = L.INSIGHT;
+  const lines = estLines(text, T.BODY, I.width - 2 * I.padX);
+  const textH = lines * T.BODY * 1.6;
+  const need = I.padTop + T.EYEBROW * 1.3 + 6.75 + textH + I.padBottom;
+  const cardH = Math.min(I.height, need);
+  if (need > I.height) RUN_WARNINGS.push('Insight terlalu panjang untuk kartunya; persingkat menjadi 2–3 kalimat.');
+  slide.getShapes().forEach(sh => {
+    try {
+      const txt = sh.getText().asString().trim();
+      const isCard = sh.getShapeType() === SlidesApp.ShapeType.ROUND_RECTANGLE &&
+        Math.abs(sh.getLeft() - I.left) < 2 && Math.abs(sh.getTop() - I.top) < 2 && txt === '';
+      if (isCard) sh.setHeight(cardH);
+      else if (txt === String(text).trim()) sh.setHeight(textH + 2 * DECK_CONFIG.TEXT_INSET.Y);   // kotak = area teks + jarak dalam
+    } catch (e) { /* abaikan */ }
+  });
+}
+
+/**
+ * Isi kartu INSIGHT. Bila teksnya kosong, seluruh kartu (kotak, label INSIGHT, placeholder) dihapus
+ * agar tidak ada kotak kosong di slide.
+ */
+function writeInsight(slide, text) {
+  const plain = stripBold(text).trim();
+  if (!plain) { removeInsightCard(slide); return; }
+  writeWithBold(slide, '{{ai_insight}}', text);
+  fitInsightCard(slide, plain);
+}
+
+/** Hapus kartu INSIGHT (kotak di posisi rancangan, label "INSIGHT", dan placeholder {{ai_insight}}). */
+function removeInsightCard(slide) {
+  const I = DECK_CONFIG.LAYOUT.INSIGHT;
+  slide.getShapes().forEach(sh => {
+    try {
+      const txt = sh.getText().asString().trim();
+      const isCard = sh.getShapeType() === SlidesApp.ShapeType.ROUND_RECTANGLE &&
+        Math.abs(sh.getLeft() - I.left) < 2 && Math.abs(sh.getTop() - I.top) < 2 && txt === '';
+      if (isCard || txt === 'INSIGHT' || txt.indexOf('{{ai_insight}}') >= 0) sh.remove();
+    } catch (e) { /* abaikan */ }
+  });
+}
+
+/** True bila judul muat satu baris slide-title (40px Bold) di lebar judul. */
+function titleFits(text) {
+  return estWidth(text, DECK_CONFIG.TYPE.SLIDE_TITLE, true) <= DECK_CONFIG.LAYOUT.TITLE.width;
+}
+
+/** Bagikan deck ke editor (sebagai editor) dan viewer (sebagai viewer) spreadsheet. Google dapat mengirim email notifikasi berbagi. */
+function shareDeckWithSheetUsers(file, ss) {
+  if (!DECK_CONFIG.SHARE_WITH_SHEET_USERS) return;
+  const me = (Session.getActiveUser().getEmail() || '').toLowerCase();
+  const emails = u => u.map(x => x.getEmail()).filter(e => e && e.toLowerCase() !== me);
+  try {
+    const ed = emails(ss.getEditors()), vw = emails(ss.getViewers()).filter(e => ed.indexOf(e) < 0);
+    if (ed.length) file.addEditors(ed);
+    if (vw.length) file.addViewers(vw);
+  } catch (e) {
+    RUN_WARNINGS.push(`Deck belum otomatis dibagikan: ${e.message}`);
+  }
+}
+
+function findShapeInPresentation(pres, text) {
+  for (const slide of pres.getSlides()) {
+    for (const sh of slide.getShapes()) {
+      try { if (sh.getText().asString().indexOf(text) >= 0) return sh; } catch (e) { /* tanpa teks */ }
+    }
+  }
+  return null;
+}
+
+function escHtml(t) { return String(t === null || t === undefined ? '' : t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+
+function showSuccessModal(slideUrl, rawName, aiOk) {
+  const name = escHtml(rawName);
+  slideUrl = /^https:\/\/docs\.google\.com\//.test(slideUrl) ? slideUrl : '#';
+  Logger.log(`Deck dibuat: ${slideUrl}`);
+  const warn = RUN_WARNINGS.length
+    ? `<p style="color:#b45309"><b>Catatan:</b><br>${RUN_WARNINGS.map(escHtml).join('<br>')}</p>` : '';
+  const note = (aiOk ? '' : '<p style="color:#b45309">Jawaban Claude tidak dipakai, teks diisi otomatis dari data. Lihat catatan di bawah untuk penyebabnya.</p>') + warn;
+  try {
+    const html = HtmlService.createHtmlOutput(`
+      <div style="font-family:Arial,sans-serif;padding:12px;line-height:1.5">
+        <p>Monthly Report KebunPRO untuk <b>${name}</b> berhasil dibuat.</p>
+        ${note}
+        <p><a href="${slideUrl}" target="_blank" style="color:#007200;font-weight:bold;text-decoration:none">Buka Google Slides</a></p>
+      </div>`).setWidth(460).setHeight(RUN_WARNINGS.length || !aiOk ? 320 : 170);
+    SpreadsheetApp.getUi().showModalDialog(html, 'Deck siap');
+  } catch (e) { /* konteks non-UI */ }
+}
+
+function showErrorAlert(message) {
+  Logger.log(`[ERROR] ${message}`);
+  try { SpreadsheetApp.getUi().alert(message); } catch (e) { /* konteks non-UI */ }
+}
+
+function onOpen() {
+  try {
+    SpreadsheetApp.getUi().createMenu('🚀 Auto Presentation')
+      .addItem('1. Salin Paket Data untuk Claude', 'showClaudePacket')
+      .addItem('2. Generate Slide Customer Saat Ini', 'generateCustomerDeck')
+      .addSeparator()
+      .addItem('Validasi semua sheet customer', 'validateAllSheets')
+      .addItem('Siapkan Template SawitPRO (khusus admin)', 'setupTemplate')
+      .addToUi();
+  } catch (e) { /* konteks non-UI */ }
+}
+
+/**
+ * Memeriksa SEMUA sheet customer tanpa membuat deck. Juga menunjukkan apakah sel jawaban Claude (D1, D2, ...) sudah terisi.
+ * Sheet tanpa header 'ton/ha' (mis. sheet catatan) otomatis dilewati.
+ * Menampilkan per customer: bulan dianalisis, mode, data yang belum ada, slide yang akan muncul, dan peringatan.
+ */
+function validateAllSheets() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const rows = [];
+  ss.getSheets().forEach(sh => {
+    RUN_WARNINGS = [];
+    const view = maskedSheetView(sh);
+    const values = view.getDataRange().getValues();
+    if (!findCell(values, DECK_CONFIG.HEADERS.YIELD)) return;
+    try {
+      const d = loadSheetData(sh);
+      const rb = readAnswerBlocks(sh);
+      const topics = buildTopics(d);
+      topics.forEach((t, i) => { t.page = i + 4; });
+      const anomalies = detectAnomalies(topics, d).filter(a => !/bulan berjalan/.test(a.text));
+      rows.push({
+        sheet: sh.getName(), title: d.title, location: d.location || '(kosong)',
+        months: `${d.months} bln (${d.dataPeriod || '-'})${d.partialMonth ? `, ${d.partialMonth} dikecualikan` : ''}`,
+        mode: d.snapshot ? 'Ringkasan (tren tidak dianalisis)' : 'Lengkap',
+        slides: topics.length, claude: rb.blocks.length ? `${rb.blocks.length} sel (${rb.blocks.map(b => b.a1).join(', ')})${rb.errors.length ? ', ada yang rusak' : ''}` : 'kosong',
+        missing: checkDataCompleteness(d).join(', ') || '-',
+        notes: anomalies.slice(0, 4).map(a => a.text.slice(0, 140)).join('<br>') || '-'
+      });
+    } catch (e) {
+      rows.push({ sheet: sh.getName(), title: '-', location: '-', months: '-', mode: 'GAGAL DIBACA', slides: 0, claude: '-', missing: '-', notes: e.message });
+    }
+  });
+  const esc = t => String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/&lt;br>/g, '<br>');
+  const html = `<div style="font-family:Arial,sans-serif;font-size:12px">
+    <p>${rows.length} sheet customer terdeteksi.</p>
+    <table style="border-collapse:collapse;width:100%">
+      <tr style="background:#007200;color:#fff">${['Sheet', 'Title', 'Lokasi', 'Data', 'Mode', 'Slide', 'Jawaban Claude', 'Data belum ada', 'Catatan teratas'].map(h => `<th style="padding:6px;text-align:left">${h}</th>`).join('')}</tr>
+      ${rows.map((r, i) => `<tr style="background:${i % 2 ? '#f4f9f6' : '#fff'};vertical-align:top">${[r.sheet, r.title, r.location, r.months, r.mode, r.slides, r.claude, r.missing, r.notes].map(c => `<td style="padding:6px;border-bottom:1px solid #e2e8f0">${esc(c)}</td>`).join('')}</tr>`).join('')}
+    </table></div>`;
+  if ((DECK_CONFIG.SECURITY || {}).LOG_AI_OUTPUT) Logger.log(JSON.stringify(rows, null, 1));
+  try { SpreadsheetApp.getUi().showModalDialog(HtmlService.createHtmlOutput(html).setWidth(1100).setHeight(560), 'Validasi sheet customer'); } catch (e) { /* non-UI */ }
+}
