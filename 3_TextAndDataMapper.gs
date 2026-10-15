@@ -349,10 +349,8 @@ function getSheetData(sheet) {
   d.landClassAssumed = !lc;
   d.sph = parseNum(d.sphRaw) || DECK_CONFIG.SPH_DEFAULT;
   d.sphAssumed = !parseNum(d.sphRaw);
-  // Jenis tanah per blok & kebutuhan pupuk indikatif (file 9)
+  // Jenis tanah per blok (file 9)
   d.soil = buildSoilAnalytics(d);
-  d.fertilizer = buildFertilizerNeed(d);
-  d.npk = buildNpkRecommendation(d);   // dihitung ulang di loadSheetData setelah dosis aktual & harga NPK dibaca
   // Tonase = berat janjang TERJUAL: BJR sebenarnya = tonase ÷ janjang terjual (kumulatif), dan
   // produksi panen diestimasi = janjang dipanen × BJR tersebut (untuk dibandingkan dengan standar Marihat).
   d.bjrSoldCum = null; d.bjrSoldMonthly = []; d.produksiPanen = null;
@@ -371,6 +369,10 @@ function getSheetData(sheet) {
     }
   }
   d.marihat = buildMarihat(d);
+  // Rekomendasi pupuk prediksi (file 9; butuh produksi realisasi dari Marihat). Dihitung ulang di loadSheetData
+  // setelah tabel hara sheet "pupuk", dosis NPK aktual, dan harga NPK dibaca.
+  d.fertilizer = buildFertilizerNeed(d);
+  d.npk = d.fertilizer;
   d.flow = buildFlow(d);
   // Tonase = berat janjang DIPANEN: penjualan hanya dari janjang yang terjual -> tonase × (terjual ÷ dipanen) × harga
   if (DECK_CONFIG.TONASE_BASIS !== 'terjual' && d.flowSold.length && d.flowPanen.length) {
