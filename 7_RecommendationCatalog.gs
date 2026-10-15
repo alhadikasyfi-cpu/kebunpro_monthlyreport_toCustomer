@@ -196,11 +196,15 @@ const RECO_CATALOG = [
       return low ? { evidence: `produktivitas ${fmtPct(M.achTon * 100, 0)}${M.achBjr ? `, BJR ${fmtPct(M.achBjr * 100, 0)}` : ''} dari standar Marihat ${M.cls}`, priority: M.achTon < 0.5 ? 'tinggi' : 'sedang' } : null; } },
 
   { code: 'R24', title: 'Sesuaikan pupuk dengan tanah dan umur',
-    action: 'Susun program pemupukan per kelompok blok berdasarkan jenis tanah dan umur tanaman, lalu siapkan pengadaan pupuk sesuai kebutuhan setahun.',
-    signals: 'Jenis tanah sudah tercatat (sebagian/seluruhnya) dan kebutuhan pupuk indikatif sudah dihitung script.',
+    action: 'Terapkan dosis NPK per kelompok blok sesuai umur tanaman dan jenis tanah (rekomendasi umum di lampiran), konfirmasi dengan uji tanah/daun, lalu siapkan pengadaan pupuk sesuai kebutuhan setahun.',
+    signals: 'Dosis NPK aktual di bawah atau di atas acuan; atau jenis tanah sudah tercatat dan rekomendasi NPK per kelompok blok sudah dihitung script.',
     topics: ['pupuk', 'tanah'],
-    when: d => { const S = d.soil, F = d.fertilizer; if (!S || !F || S.knownPct <= 0) return null;
-      return { evidence: `${fmt(S.knownPct, 0)}% luas sudah tercatat jenis tanahnya${S.dominant ? ` (dominan ${S.dominant.name})` : ''}; kebutuhan pupuk indikatif ±${fmt(F.totalTon, 0)} ton/tahun`, priority: 'sedang' }; } },
+    when: d => { const S = d.soil, N = d.npk; if (!N) return null;
+      if (N.kurangHa) return { evidence: `dosis NPK ${fmt(N.actual, 1)} kg/pohon/tahun di bawah acuan untuk ${fmt(N.kurangHa, 1)} ha; risiko produksi turun`, priority: 'tinggi' };
+      if (N.lebihHa) return { evidence: `dosis NPK ${fmt(N.actual, 1)} kg/pohon/tahun di atas acuan untuk ${fmt(N.lebihHa, 1)} ha${N.lebihRp ? ` (≈ ${fmtRp(N.lebihRp)}/tahun terbuang)` : ''}`, priority: 'tinggi' };
+      if (!S || S.knownPct <= 0) return null;
+      const r = N.rows.find(x => x.soilKnown) || N.rows[0];
+      return { evidence: `${fmt(S.knownPct, 0)}% luas tercatat jenis tanahnya; contoh ${r.age.toLowerCase()} tanah ${r.soil.toLowerCase()}: NPK ${npkRange(r)} kg/pohon/tahun; total ${fmt(N.tonLo, 0)}–${fmt(N.tonHi, 0)} ton/tahun`, priority: 'sedang' }; } },
 
   { code: 'R17', title: 'Pertahankan praktik yang sudah baik',
     action: 'Dokumentasikan praktik panen dan perawatan yang membuat kinerja naik agar tetap dijalankan.',

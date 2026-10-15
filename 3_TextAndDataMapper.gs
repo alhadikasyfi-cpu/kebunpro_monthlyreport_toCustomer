@@ -352,6 +352,7 @@ function getSheetData(sheet) {
   // Jenis tanah per blok & kebutuhan pupuk indikatif (file 9)
   d.soil = buildSoilAnalytics(d);
   d.fertilizer = buildFertilizerNeed(d);
+  d.npk = buildNpkRecommendation(d);   // dihitung ulang di loadSheetData setelah dosis aktual & harga NPK dibaca
   // Tonase = berat janjang TERJUAL: BJR sebenarnya = tonase ÷ janjang terjual (kumulatif), dan
   // produksi panen diestimasi = janjang dipanen × BJR tersebut (untuk dibandingkan dengan standar Marihat).
   d.bjrSoldCum = null; d.bjrSoldMonthly = []; d.produksiPanen = null;

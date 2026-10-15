@@ -40,6 +40,8 @@ function monthLong(){ return 'Mei 2026'; }
 function checkDataCompleteness(){ return []; }
 function describeSoil(){ return 'JENIS TANAH BLOK: Belum tercatat 100%'; }
 function describeFertilizer(){ return 'KEBUTUHAN PUPUK INDIKATIF: -'; }
+function describeNpk(){ return 'REKOMENDASI NPK UMUM: -'; }
+function buildNpkRecommendation(){ return null; }
 function mkey(p){ return p.y + '-' + p.m; }
 const KPI_LIBRARY = {};
 function fmt(n, d){ if (n===null||n===undefined||isNaN(n)) return '-'; const p=Math.abs(n).toFixed(d===undefined?2:d).split('.'); p[0]=p[0].replace(/(?=(?:[0-9]{3})+$)(?!^)/g,'.'); return (n<0?'-':'')+p.join(','); }
@@ -232,7 +234,7 @@ for (const f of ['1_ConfigAndStyle.gs', '3_TextAndDataMapper.gs', '4_ClaudeBridg
 const W = 20, blank = () => Array(W).fill('');
 const G = []; for (let i = 0; i < 60; i++) G.push(blank());
 const put = (r, c, v) => { G[r][c] = v; };
-put(0, 0, 'Title'); put(0, 1, 'Kebun Uji'); put(1, 0, 'Period'); put(1, 1, 'Mar 2026 - Sep 2026'); put(2, 0, 'Lokasi'); put(2, 1, 'Dumai');
+put(0, 0, 'Title'); put(0, 1, 'Kebun Uji'); put(0, 2, 'Dosis NPK Aktual'); put(0, 3, 1.2); put(1, 2, 'Harga Pupuk NPK'); put(1, 3, 12000); put(1, 0, 'Period'); put(1, 1, 'Mar 2026 - Sep 2026'); put(2, 0, 'Lokasi'); put(2, 1, 'Dumai');
 ['year_month', 'ton/ha', 'jjg/ha', 'luas panen', 'hargajual/kg', 'total_janjang', 'total_sale_jjg', 'janjang_terjual_tanpa_berat', 'total_tonasehasil', 'avg_bjr_kg',
  'block sale (name, luas, tahun tanam, soil type)', 'block unsale (name, luas, tahun tanam, soil type)'].forEach((h, c) => put(3, c, h));
 ['Month', 'jjg Dipanen', 'jjg Dimuat', 'jjg Masuk trip', 'jjg Terjual', 'jjg Terjual tanpa berat'].forEach((h, i) => put(3, 14 + i, h));
@@ -284,7 +286,17 @@ const lay2 = run2(`(function(){ const out = []; P2.mains.forEach(m => { const b 
 const A2 = run2('DECK_CONFIG.LAYOUT.CONTENT');
 ok(lay2.every(ts => ts.every(t => t.y >= A2.top - 1 && t.y + t.h <= A2.top + A2.height + 1)), 'grafik kesimpulan kelima slide utama muat di area konten');
 const tbl2 = run2(`(function(){ const t = P2.appendix.find(x => x.id === 'pupuk'); const b = new SlideBatch('pg','pupuk'); t.draw(b); const t2 = P2.appendix.find(x => x.id === 'alurjjg'); const b2 = new SlideBatch('pg','alur'); t2.draw(b2); return JSON.stringify(b.req) + JSON.stringify(b2.req); })()`);
-ok(/Urea \(N\)/.test(tbl2) && /"text":"6.600"/.test(tbl2), 'lampiran pupuk tergambar; corong alur janjang memakai bulan laporan (6.600 dipanen)');
+ok(/Gambut/.test(tbl2) && /NPK\\nkg\/pohon\/th/.test(tbl2) && /"text":"6.600"/.test(tbl2), 'lampiran rekomendasi NPK tergambar; corong alur janjang memakai bulan laporan (6.600 dipanen)');
+const N2 = D2.npk, rowOf = (age, soil) => N2.rows.find(r => r.age.indexOf(age) === 0 && r.soil === soil);
+ok(N2 && N2.actual === 1.2 && N2.price === 12000, 'dosis NPK aktual 1,2 kg & harga Rp12.000/kg terbaca dari nilai asli sel (bukan tampilan "12.000")');
+ok(rowOf('TM tua', 'Gambut') && rowOf('TM tua', 'Gambut').lo === 1.125 && rowOf('TM tua', 'Gambut').hi === 2.5 && rowOf('TM tua', 'Gambut').status === 'sesuai' &&
+   rowOf('TM puncak', 'Gambut').status === 'kurang' && rowOf('TM puncak', 'Belum tercatat').lo === 2,
+  'rekomendasi NPK per umur × tanah: TM tua gambut 1,1–2,5 kg (sesuai), TM puncak gambut kurang, tanah belum tercatat = acuan mineral');
+console.log(N2.rows.map(r => `   ${r.ageShort} | ${r.soil} | ${r.ha} ha | NPK ${r.lo.toFixed(2)}–${r.hi.toFixed(2)} kg/pohon/th | ${r.tonLo.toFixed(1)}–${r.tonHi.toFixed(1)} ton | ${r.status}${r.gapRp ? ' Rp' + Math.round(r.gapRp) : ''}`).join('\n'));
+const np2 = run2(`(function(){ const t = P2.appendix.find(x => x.id === 'pupuk'); const b = new SlideBatch('pg','npk'); t.draw(b); return JSON.stringify(b.req) + t.facts; })()`);
+ok(/Dosis aktual/.test(np2) && /"text":"kurang"/.test(np2) && /BUKAN tabel Standar Marihat/.test(np2) && /PERLU DICEK: dosis NPK aktual 1,2/.test(np2) && /6–24 bulan/.test(np2),
+  'lampiran NPK: tabel per kelompok + kolom status, fakta memuat risiko kurang/berlebih dan temuan PERLU DICEK');
+ok(rc2.indexOf('R24') >= 0 && /di bawah acuan/.test(run2('detectRecommendations(D2, P2.topics, detectAnomalies(P2.topics, D2))').find(r => r.code === 'R24').evidence), 'R24: bukti memakai status dosis NPK (di bawah acuan)');
 ok(run2('dataHeadline("m_kebocoran", D2)') && /Sep|September/.test(run2('dataHeadline("m_kebocoran", D2)')), `judul otomatis kebocoran: "${run2('dataHeadline("m_kebocoran", D2)')}"`);
 
 console.log(process.exitCode ? '\nADA YANG GAGAL' : '\nSEMUA UJI LOLOS');

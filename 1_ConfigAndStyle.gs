@@ -290,7 +290,11 @@ const DECK_CONFIG = {
     TARGET_TBS: ['Target TBS', 'Target TBS (ton/bulan)', 'Target Produksi'],          // ton per bulan
     TARGET_YIELD: ['Target Yield', 'Target Yield (ton/ha/bulan)'],                     // ton/ha per bulan
     TARGET_BJR: ['Target BJR', 'Target BJR (kg)'],                                     // kg per janjang
-    TARGET_REVENUE: ['Target Pendapatan', 'Target Pendapatan (Rp/bulan)', 'Target Penjualan']   // rupiah per bulan
+    TARGET_REVENUE: ['Target Pendapatan', 'Target Pendapatan (Rp/bulan)', 'Target Penjualan'],  // rupiah per bulan
+    // Opsional: PEMUPUKAN. Label di satu sel, nilai tepat di kanannya. Bila dosis aktual diisi, tiap kelompok blok
+    // (umur × jenis tanah) dinilai kurang / sesuai / berlebih terhadap acuan NPK (file 9); harga dipakai merupiahkan selisihnya.
+    NPK_ACTUAL: ['Dosis NPK Aktual', 'Dosis NPK Aktual (kg/pohon/tahun)', 'Dosis NPK'],   // kg NPK per pohon per tahun
+    NPK_PRICE: ['Harga Pupuk NPK', 'Harga NPK', 'Harga NPK (Rp/kg)']                        // rupiah per kg
   },
 
   FOOTER_LEFT: 'MATERI MILIK\nSAWITPRO',

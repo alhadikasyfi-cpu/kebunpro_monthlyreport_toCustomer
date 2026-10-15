@@ -267,6 +267,9 @@ function loadSheetData(sheet) {
     return n && n > 0 ? n : null;
   };
   d.targets = { tbs: num(H.TARGET_TBS), yield: num(H.TARGET_YIELD), bjr: num(H.TARGET_BJR), revenue: num(H.TARGET_REVENUE) };
+  // Pemupukan (opsional): dosis NPK aktual & harga NPK -> rekomendasi NPK dinilai ulang (kurang/sesuai/berlebih)
+  d.npkActual = num(H.NPK_ACTUAL); d.npkPrice = num(H.NPK_PRICE);
+  if (d.npkActual || d.npkPrice) d.npk = buildNpkRecommendation(d);
   return d;
 }
 
@@ -689,14 +692,17 @@ function buildTopics(d) {
     draw: b => drawTable(b, ['Jenis tanah', 'Luas\nha', 'Porsi\nluas', 'Blok', 'Fokus hara'], SR,
       { colWidths: [2.3, 1.1, 1.1, 0.9, 3.2], fontSize: DECK_CONFIG.TYPE.TABLE_CELL, headerSize: DECK_CONFIG.TYPE.TABLE_HEADER, rowHeight: 25, headerHeight: 36, numCols: [1, 2, 3] })
   });
-  const FR = fertilizerTableRows(d);
-  if (FR) T.push({
-    id: 'pupuk', title: 'Kebutuhan Pupuk Indikatif per Tahun',
-    visual: 'tabel kebutuhan pupuk indikatif: jenis pupuk, dosis rata-rata kg/pokok/tahun, total ton/tahun (acuan umur tanaman × jenis tanah, wajib dikonfirmasi uji tanah dan daun)',
-    facts: describeFertilizer(d),
-    fallback: `Berdasarkan umur tanaman${d.soil && d.soil.knownPct > 0 ? ' dan jenis tanah' : ''}, kebutuhan pupuk indikatif kebun sekitar ${fmt(d.fertilizer.totalTon, 0)} ton per tahun. Angka ini acuan awal dan perlu dikonfirmasi dengan uji tanah dan uji daun.`,
-    draw: b => drawTable(b, ['Pupuk', 'Dosis rata-rata\nkg/pokok/tahun', 'Kebutuhan\nton/tahun'], FR,
-      { colWidths: [3.2, 2.0, 1.8], fontSize: DECK_CONFIG.TYPE.TABLE_CELL, headerSize: DECK_CONFIG.TYPE.TABLE_HEADER, rowHeight: 25, headerHeight: 36, numCols: [1, 2] })
+  // Rekomendasi pupuk NPK UMUM per kelompok blok (umur × jenis tanah); dosis pasti lewat uji tanah/daun Dokter Sawit
+  const NR = npkTableRows(d);
+  if (NR) T.push({
+    id: 'pupuk', title: 'Rekomendasi Pupuk NPK per Umur dan Tanah',
+    visual: 'tabel rekomendasi NPK umum per kelompok blok: kelas umur, jenis tanah, luas, kg NPK/pohon/tahun, kebutuhan ton/tahun' + (d.npk.actual !== null ? ', status dosis aktual (kurang/sesuai/berlebih)' : ''),
+    facts: describeNpk(d) + '\n' + describeFertilizer(d),
+    fallback: (() => { const r = d.npk.rows[0];
+      return `Kelompok blok terluas (${r.age.toLowerCase()}, tanah ${r.soil.toLowerCase()}, ${fmt(r.ha, 0)} ha) membutuhkan NPK sekitar ${npkRange(r)} kg/pohon/tahun; total kebun ${fmt(d.npk.tonLo, 0)}–${fmt(d.npk.tonHi, 0)} ton per tahun. Ini acuan umum; dosis pasti perlu uji tanah dan uji daun.`; })(),
+    draw: b => drawTable(b, ['Umur', 'Jenis tanah', 'Luas\nha', 'NPK\nkg/pohon/th', 'Kebutuhan\nton/tahun'].concat(d.npk.actual !== null ? [`Dosis aktual\n${fmt(d.npk.actual, 1)} kg`] : []), NR,
+      { colWidths: d.npk.actual !== null ? [2.0, 2.0, 1.0, 1.4, 1.5, 1.4] : [2.2, 2.3, 1.1, 1.6, 1.7], fontSize: DECK_CONFIG.TYPE.TABLE_CELL, headerSize: DECK_CONFIG.TYPE.TABLE_HEADER, rowHeight: 25, headerHeight: 36, numCols: [2, 3, 4],
+        cellColor: (r, c, txt) => (txt === 'kurang' || txt === 'berlebih' ? DECK_CONFIG.COLOR.DANGER : txt === 'sesuai' ? DECK_CONFIG.COLOR.GREEN : null) })
   });
 
   const up = upkeepItems(d);
@@ -1125,7 +1131,11 @@ function dataHeadline(id, d) {
     replanting: () => (B && B.replant.length ? [`${B.replant.length} blok (${fmt(B.replant.reduce((x, b) => x + b.ha, 0), 0)} ha) lewat umur ekonomis`] : null),
     tanah: () => (!S ? null : S.unknownPct >= 50 ? [`${fmt(S.unknownPct, 0)}% luas belum ada data jenis tanah`, 'Jenis tanah sebagian besar belum tercatat']
       : S.dominant ? [`Tanah dominan ${S.dominant.name.toLowerCase()}, ${fmt(S.dominant.pct, 0)}% luas`, `Tanah dominan ${S.dominant.name.toLowerCase()}`] : null),
-    pupuk: () => (FZ ? [`Kebutuhan pupuk indikatif ±${fmt(FZ.totalTon, 0)} ton per tahun`, `Kebutuhan pupuk ±${fmt(FZ.totalTon, 0)} ton/tahun`] : null),
+    pupuk: () => { const NP = d.npk; if (!NP) return FZ ? [`Kebutuhan pupuk ±${fmt(FZ.totalTon, 0)} ton/tahun`] : null;
+      if (NP.kurangHa) return [`Dosis NPK di bawah acuan untuk ${fmt(NP.kurangHa, 0)} ha`];
+      if (NP.lebihHa) return [`Dosis NPK di atas acuan untuk ${fmt(NP.lebihHa, 0)} ha`];
+      const r = NP.rows[0];
+      return [`NPK ${npkRange(r)} kg/pohon/tahun untuk ${r.ageShort}`, `Kebutuhan NPK ${fmt(NP.tonLo, 0)}–${fmt(NP.tonHi, 0)} ton per tahun`]; },
     m_keuangan: laba,
     laba: laba,
     m_tim: () => {
@@ -1210,7 +1220,7 @@ function drawProfitChart(b, rev, cost) {
 
 /** Nama pendek slide lampiran untuk tombol (maks. ±18 karakter) dan Daftar Lampiran. */
 const SHORT_TITLES = {
-  scorecard: 'Tabel kinerja', tanah: 'Jenis tanah', pupuk: 'Kebutuhan pupuk', produksi: 'Tren TBS terjual', panen: 'Luas panen', yield: 'Yield per ha', marihat: 'Std. Marihat',
+  scorecard: 'Tabel kinerja', tanah: 'Jenis tanah', pupuk: 'Rekomendasi NPK', produksi: 'Tren TBS terjual', panen: 'Luas panen', yield: 'Yield per ha', marihat: 'Std. Marihat',
   jjg: 'Janjang/ha', bjr: 'BJR', umur: 'Umur tanaman', umuryield: 'Umur vs yield', replanting: 'Replanting',
   alurjjg: 'Alur janjang', restan: 'Panen vs muat', tanpaberat: 'Tanpa berat', blokunsale: 'Blok tanpa jual',
   laba: 'Laba kotor', biayakg: 'Biaya per kg', efisiensi: 'Porsi biaya', biayakomposisi: 'Komposisi biaya', biayaha: 'Biaya per ha',
@@ -1274,9 +1284,9 @@ const STORY = [
   { id: 'tanah', section: 'Kondisi Tanaman', title: 'Jenis Tanah Blok',
     q: 'Di jenis tanah apa blok-blok kebun berada, apa kendala haranya, dan berapa luas yang belum tercatat jenis tanahnya?',
     link: 'Selain umur, jenis tanah menentukan hara yang kurang dan dosis pupuk yang tepat untuk setiap pokok.' },
-  { id: 'pupuk', section: 'Kondisi Tanaman', title: 'Kebutuhan Pupuk Indikatif per Tahun',
-    q: 'Berapa kira-kira kebutuhan pupuk setahun menurut umur tanaman dan jenis tanah, sebelum dikonfirmasi uji tanah dan daun?',
-    link: 'Dari jenis tanah (slide sebelumnya) dan umur tanaman dihitung kebutuhan pupuk indikatif per pokok dan total kebun.' },
+  { id: 'pupuk', section: 'Kondisi Tanaman', title: 'Rekomendasi Pupuk NPK per Umur dan Tanah',
+    q: 'Berapa kg NPK per pohon per tahun yang dianjurkan untuk tiap kelompok blok (umur tanaman × jenis tanah), apakah dosis kebun kurang atau berlebih, dan berapa kebutuhan setahun?',
+    link: 'Dari jenis tanah (slide sebelumnya) dan umur tanaman tiap blok disusun rekomendasi NPK umum; dosis pasti dikonfirmasi uji tanah dan uji daun.' },
   { id: 'umuryield', section: 'Kondisi Tanaman', title: 'Umur Blok Dipanen per Bulan',
     q: 'Apakah bulan yang didominasi blok tua menghasilkan yield lebih rendah?',
     link: 'Menghubungkan struktur umur (slide sebelumnya) dengan yield bulanan.' },

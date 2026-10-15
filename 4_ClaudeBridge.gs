@@ -237,6 +237,7 @@ ${describeBlocks(data)}
 
 JENIS TANAH & KEBUTUHAN PUPUK (dasar rekomendasi uji tanah, uji daun, dan pupuk)
 ${describeSoil(data)}
+${describeNpk(data)}
 ${describeFertilizer(data)}
 
 FAKTA PER SLIDE
