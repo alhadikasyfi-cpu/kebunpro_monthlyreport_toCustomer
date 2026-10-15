@@ -83,12 +83,19 @@ function buildTopics(d) {
 `, 'stub2.js');
 
 // --- sheet palsu ---
-const grid = disp => { const g = []; for (let r = 0; r < 5; r++) g.push(r === 4 ? ['Target TBS', disp ? '1.200' : 1200, '', cells['D5'] || ''] : ['Title', 'x', '', cells['D' + (r + 1)] || '']); return g; };
+// Sheet tiruan: baris 1–3 Title/Period/Lokasi (sel jawaban D1–D3 dan F1), baris 4 = header tabel (D4 = luas panen), baris 5 = target
+const grid = disp => { const g = [];
+  for (let r = 0; r < 5; r++) {
+    if (r === 3) g.push(['year_month', 'ton/ha', 'jjg/ha', 'luas panen', 'hargajual/kg', 'total_janjang']);
+    else if (r === 4) g.push(['Target TBS', disp ? '1.200' : 1200, '', cells['D5'] || '', '', '']);
+    else g.push(['Title', 'x', '', cells['D' + (r + 1)] || '', '', cells['F' + (r + 1)] || '']);
+  }
+  return g; };
 const sheet = {
   getName: () => 'Sheet Budi', getDataRange: () => ({ getValues: () => grid(false), getDisplayValues: () => grid(true) }),
   getRange: a1 => ({ getValue: () => cells[a1] || '' })
 };
-ctx.sheet = sheet;
+ctx.sheet = sheet; ctx.cells0 = cells;
 const run = code => vm.runInContext(code, ctx);
 const ok = (c, m) => { console.log((c ? 'OK   ' : 'GAGAL'), m); if (!c) process.exitCode = 1; };
 
@@ -217,9 +224,16 @@ ok(res.ai === null && !res.abort && /belum berisi/.test(run('RUN_WARNINGS').join
 UI_ON = true; CAPTURED = null; res = run('loadClaudeAnswer(sheet, data, plan)'); UI_ON = false;
 ok(res.ai === null && CAPTURED && /belum berisi/.test(CAPTURED[1]), 'D1 kosong dengan UI: pengguna ditanya dulu');
 
-// 8. Isi D4 non-JSON tidak ikut terbaca
+// 8. Isi sel non-JSON tidak ikut terbaca
 cells.D1 = 'Catatan biasa'; res = run('readAnswerBlocks(sheet)');
 ok(res.blocks.length === 0, 'sel D berisi teks biasa tidak dianggap jawaban');
+// 8b. Sel jawaban = D1, D2, D3, F1 (D4 adalah header tabel); blok ke-4 dibaca dari F1 dan disembunyikan dari pembaca data
+ok(run('claudeCells().join()') === 'D1,D2,D3,F1' && run('claudeCellA1(3)') === 'F1', 'sel jawaban: D1, D2, D3, F1 (bukan D4 yang berisi header tabel)');
+for (const k of Object.keys(cells)) delete cells[k];
+setAnswer(packet.id); cells.F1 = JSON.stringify({ packet_id: packet.id, slides: [] });
+res = run('readAnswerBlocks(sheet)'); run('loadSheetData(sheet)');
+ok(res.blocks.map(b => b.a1).join() === 'D1,D2,D3,F1' && GRID().v === '' && run('maskAiCells([["Title","x","",cells0.D1,"",cells0.F1]])[0][5]') === '',
+  'F1 terbaca sebagai blok ke-4 dan ikut disembunyikan dari pembaca data');
 // 9. Grafik kesimpulan slide utama (bulan laporan vs pembanding), dengan data tiruan
 const sumK = run(`MAIN_SUMMARY.m_kinerja({ produksiActual: true, produksi: [{p:{y:2026,m:7},value:210},{p:{y:2026,m:8},value:234.8}],
   revenueTotal: [{p:{y:2026,m:7},value:2.1e8},{p:{y:2026,m:8},value:2.75e8}], costTotal: [{p:{y:2026,m:7},value:3.0e7},{p:{y:2026,m:8},value:3.6e7}],

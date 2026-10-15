@@ -62,17 +62,21 @@ function cleanHeadline(text, where) {
 
 function tryUi() { try { return SpreadsheetApp.getUi(); } catch (e) { return null; } }
 
-/** 1 -> A, 4 -> D, 27 -> AA */
-function colLetter(n) {
-  let s = '';
-  while (n > 0) { const m = (n - 1) % 26; s = String.fromCharCode(65 + m) + s; n = Math.floor((n - 1) / 26); }
-  return s;
+/** Daftar sel jawaban (DECK_CONFIG.CLAUDE_INPUT.CELLS), mis. ['D1','D2','D3','F1']. */
+function claudeCells() { return (DECK_CONFIG.CLAUDE_INPUT.CELLS || ['D1', 'D2', 'D3', 'F1']).map(a => String(a).trim().toUpperCase()); }
+
+/** Alamat sel jawaban ke-i: 0 = D1, 1 = D2, 2 = D3, 3 = F1 (urutan di CLAUDE_INPUT.CELLS). */
+function claudeCellA1(i) {
+  const cells = claudeCells();
+  return cells[i] || `(sel ke-${i + 1} belum diatur)`;
 }
 
-/** Alamat sel jawaban ke-i: 0 = D1, 1 = D2, 2 = D3, ... (kolom & baris awal diatur di DECK_CONFIG.CLAUDE_INPUT). */
-function claudeCellA1(i) {
-  const c = DECK_CONFIG.CLAUDE_INPUT;
-  return colLetter(c.CELL_COL) + (c.CELL_START_ROW + i);
+/** "F1" -> {r: 0, c: 5} (indeks mulai 0). */
+function a1ToRC(a1) {
+  const m = String(a1).toUpperCase().match(/^([A-Z]+)(\d+)$/);
+  if (!m) return null;
+  const c = m[1].split('').reduce((n, ch) => n * 26 + (ch.charCodeAt(0) - 64), 0) - 1;
+  return { r: Number(m[2]) - 1, c };
 }
 
 /** 8 karakter pertama hash MD5 (ID paket). */
@@ -90,8 +94,9 @@ function isAiBlockText(v) {
 
 /** Kosongkan sel jawaban Claude pada salinan data (di memori) agar teks JSON besar tidak dibaca sebagai data kebun. */
 function maskAiCells(grid) {
-  const ci = DECK_CONFIG.CLAUDE_INPUT.CELL_COL - 1;
-  grid.forEach(row => { if (row.length > ci && isAiBlockText(row[ci])) row[ci] = ''; });
+  claudeCells().map(a1ToRC).filter(Boolean).forEach(({ r, c }) => {
+    if (grid[r] && grid[r].length > c && isAiBlockText(grid[r][c])) grid[r][c] = '';
+  });
   return grid;
 }
 
@@ -126,9 +131,8 @@ function parseAnswerJson(raw) {
 
 /** Baca sel D1, D2, ... berurutan; berhenti di sel pertama yang bukan blok jawaban. -> {blocks:[{a1, obj|null}], errors:[]} */
 function readAnswerBlocks(sheet) {
-  const c = DECK_CONFIG.CLAUDE_INPUT;
   const blocks = [], errors = [];
-  for (let i = 0; i < c.MAX_BLOCKS; i++) {
+  for (let i = 0; i < claudeCells().length; i++) {
     const a1 = claudeCellA1(i);
     const v = sheet.getRange(a1).getValue();
     if (!isAiBlockText(v)) break;
@@ -178,7 +182,7 @@ function buildClaudePacket(data, plan) {
   for (let i = 0; i < appendix.length; i += per) slideBlocks.push(appendix.slice(i, i + per));
   const blocks = [{ a1: claudeCellA1(0), kind: 'utama', slides: [] }]
     .concat(slideBlocks.map((arr, i) => ({ a1: claudeCellA1(i + 1), kind: 'slides', slides: arr })));
-  if (blocks.length > cfg.MAX_BLOCKS) RUN_WARNINGS.push(`Jawaban butuh ${blocks.length} sel, tetapi CLAUDE_INPUT.MAX_BLOCKS hanya ${cfg.MAX_BLOCKS}; naikkan nilainya di DECK_CONFIG.`);
+  if (blocks.length > claudeCells().length) RUN_WARNINGS.push(`Jawaban butuh ${blocks.length} sel, tetapi CLAUDE_INPUT.CELLS hanya ${claudeCells().length} sel (${claudeCells().join(', ')}); tambahkan sel kosong di DECK_CONFIG.`);
   const blockPlan = blocks.map((b, i) => b.kind === 'utama'
     ? `- Sel ${b.a1} (blok UTAMA): packet_id, storyline, agenda, agenda_notes, summaries (id: ${mains.map(m => m.id).join(', ')}), executive_summary, intro_notes, anomalies, anomaly_notes, conclusion.`
     : `- Sel ${b.a1} (blok SLIDE ${i}/${slideBlocks.length}): packet_id dan slides untuk id berikut, URUT: ${b.slides.map(t => t.id).join(', ')}.`).join('\n');

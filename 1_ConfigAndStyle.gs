@@ -32,13 +32,13 @@ const DECK_CONFIG = {
   SHARE_WITH_SHEET_USERS: true,
 
   // ---------------- JAWABAN CLAUDE (pengganti API AI) ----------------
-  // Script TIDAK memanggil API AI apa pun. Teks deck ditulis Claude di chat, lalu ditempel ke sel berurutan
-  // pada sheet customer: D1 (blok utama), D2, D3, ... (blok slide lampiran). Menu "1. Salin Paket Data untuk Claude"
-  // menampilkan sel mana saja yang harus diisi.
+  // Script TIDAK memanggil API AI apa pun. Teks deck ditulis Claude di chat, lalu ditempel ke sel jawaban
+  // pada sheet customer, berurutan sesuai CELLS: sel pertama = blok utama, berikutnya = blok slide lampiran.
+  // Menu "1. Salin Paket Data untuk Claude" menampilkan sel mana saja yang harus diisi.
   CLAUDE_INPUT: {
-    CELL_COL: 4,           // kolom sel jawaban pertama: 4 = D
-    CELL_START_ROW: 1,     // baris sel jawaban pertama: 1 -> D1, D2, D3, ...
-    MAX_BLOCKS: 8,         // maksimal sel jawaban yang dibaca (D1..D8)
+    // Sel jawaban berurutan. Harus sel KOSONG di luar tabel data: baris 4 adalah header tabel (D4 = luas panen),
+    // jadi dipakai D1–D3 (di samping Title/Period/Lokasi) lalu F1. Tambah sel lain di sini bila butuh lebih banyak blok.
+    CELLS: ['D1', 'D2', 'D3', 'F1'],
     SLIDES_PER_BLOCK: 12   // maksimal slide lampiran per sel (menjaga tiap sel jauh di bawah batas 50.000 karakter Sheets)
   },
 
