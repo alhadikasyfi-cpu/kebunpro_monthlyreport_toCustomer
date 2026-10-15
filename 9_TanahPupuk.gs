@@ -355,3 +355,92 @@ function npkTableRows(d) {
   rows.push([`Total ton/tahun`, '', fmt(N.ha, 1), PUPUK_LIST.map(p => fmt(N.total[p.key], 0)).join(' / '), fmt(N.npkTon, 0)].concat(N.actual !== null ? [''] : []));
   return rows;
 }
+
+/* ------------------------------------------------------------------------- */
+/* STATUS PEMUPUKAN: pesan utama untuk owner                                  */
+/* ------------------------------------------------------------------------- */
+
+/**
+ * Inti bagian pupuk: memberi tahu owner apakah pohonnya terindikasi KURANG atau KELEBIHAN pupuk, lalu mengajak
+ * memastikan lewat Uji Daun dan Uji Tanah Dokter Sawit. Angka lain (Marihat, dosis prediksi, aktivitas pemupukan,
+ * jenis tanah) hanya BUKTI PENDUKUNG.
+ * -> {verdict: 'kurang'|'berlebih'|'sesuai'|'belum', label, reason, evidence:[{indikator, kebun, acuan, arti, arah}]}
+ *    arah: 'kurang' | 'lebih' | 'netral' (menentukan warna baris di slide).
+ */
+const STATUS_PUPUK_LABEL = {
+  kurang: 'Indikasi kurang pupuk', berlebih: 'Indikasi kelebihan pupuk',
+  sesuai: 'Tidak ada indikasi kurang pupuk', belum: 'Status pupuk belum dapat dinilai'
+};
+const STATUS_PUPUK_SARAN = 'Pastikan dengan Uji Daun dan Uji Tanah Dokter Sawit';
+
+function buildFertilizerStatus(d) {
+  const M = d.marihat, N = d.npk, S = d.soil, ev = [];
+  const pct = v => `${fmt(v * 100, 0)}%`;
+  // 1. Hasil vs standar Marihat untuk umur yang sama (kurang hara adalah salah satu penyebab umum hasil rendah)
+  if (M) {
+    ev.push({ indikator: 'Produktivitas', kebun: `${fmt(M.realTonHa, 1)} ton/ha/th`, acuan: `${fmt(M.pot.ton, 1)} (Marihat ${M.cls})`,
+      arti: M.achTon < 0.8 ? `${pct(M.achTon)} dari potensi; kurang hara salah satu penyebab umum` : `${pct(M.achTon)} dari potensi`,
+      arah: M.achTon < 0.8 ? 'kurang' : 'netral' });
+    if (M.achBjr) ev.push({ indikator: 'BJR', kebun: `${fmt(M.realBjr, 1)} kg`, acuan: `${fmt(M.pot.rbt, 1)} kg`,
+      arti: M.achBjr < 0.85 ? 'tandan ringan; sering terkait kurang K dan Mg' : 'berat tandan wajar', arah: M.achBjr < 0.85 ? 'kurang' : 'netral' });
+    if (M.achRjt) ev.push({ indikator: 'Janjang per pokok', kebun: `${fmt(M.realRjt, 1)}/tahun`, acuan: `${fmt(M.pot.rjt, 1)}/tahun`,
+      arti: M.achRjt < 0.8 ? 'tandan sedikit; terkait N dan K (juga rotasi panen)' : 'jumlah tandan wajar', arah: M.achRjt < 0.8 ? 'kurang' : 'netral' });
+  }
+  // 2. Dosis NPK aktual vs prediksi (bila diisi di sheet)
+  let doseVerdict = null;
+  if (N && N.actual !== null && N.rows.length) {
+    const lo = Math.min.apply(null, N.rows.map(r => r.lo)), hi = Math.max.apply(null, N.rows.map(r => r.hi));
+    const kShare = N.kurangHa / N.ha, lShare = N.lebihHa / N.ha;
+    doseVerdict = kShare >= 0.3 && kShare >= lShare ? 'kurang' : lShare >= 0.3 ? 'berlebih' : 'sesuai';
+    ev.push({ indikator: 'Dosis NPK aktual', kebun: `${fmt(N.actual, 1)} kg/pohon/th`, acuan: `prediksi ${fmt(lo, 1)}–${fmt(hi, 1)} kg`,
+      arti: doseVerdict === 'sesuai' ? (N.kurangHa || N.lebihHa ? `sebagian blok ${N.kurangHa ? 'kurang' : 'berlebih'}` : 'sesuai prediksi')
+        : `${doseVerdict} untuk ${fmt(doseVerdict === 'kurang' ? N.kurangHa : N.lebihHa, 0)} ha${doseVerdict === 'berlebih' && N.lebihRp ? ` (≈ ${fmtRpShort(N.lebihRp)}/th)` : ''}`,
+      arah: doseVerdict === 'kurang' ? 'kurang' : doseVerdict === 'berlebih' ? 'lebih' : 'netral' });
+  }
+  // 3. Pemupukan yang tercatat di KebunPRO (biaya upkeep & aktivitas mandor rawat)
+  const fertUpkeep = upkeepItems(d).filter(x => /pupuk|fert|pemupukan/i.test(x.name));
+  const R = d.rawatActivities;
+  const fertDays = R ? R.rows.reduce((a, r) => a + r.vals.filter(v => v && v.acts.some(x => /pupuk|fert/i.test(x.name))).length, 0) : 0;
+  if (d.upkeep || R) {
+    const ada = fertUpkeep.length || fertDays;
+    ev.push({ indikator: 'Pemupukan tercatat', kebun: ada ? [fertUpkeep.length ? fmtRpShort(fertUpkeep.reduce((a, x) => a + x.value, 0)) : '', fertDays ? `${fertDays} catatan mandor` : ''].filter(Boolean).join(', ') : 'tidak tercatat',
+      acuan: '2–3 kali/tahun', arti: ada ? 'ada catatan pemupukan' : 'belum terlihat di catatan KebunPRO', arah: ada ? 'netral' : 'kurang' });
+  }
+  // 4. Jenis tanah (menentukan kebutuhan khusus; tanpa data tanah dosis belum bisa disesuaikan)
+  if (S) {
+    const gb = S.groups.find(g => g.key === 'gambut');
+    if (gb) ev.push({ indikator: 'Jenis tanah', kebun: `Gambut ${fmt(gb.ha, 0)} ha`, acuan: '-', arti: 'butuh K lebih serta Cu dan Zn', arah: 'netral' });
+    else if (S.unknownPct >= 50) ev.push({ indikator: 'Jenis tanah', kebun: `${fmt(S.unknownPct, 0)}% belum tercatat`, acuan: '-', arti: 'dosis belum bisa disesuaikan dengan tanah', arah: 'netral' });
+  }
+  const yieldLow = M && (M.achTon < 0.8 || (M.achBjr && M.achBjr < 0.85));
+  const verdict = doseVerdict && doseVerdict !== 'sesuai' ? doseVerdict
+    : yieldLow ? 'kurang'
+    : doseVerdict === 'sesuai' || (M && M.achTon >= 0.8) ? 'sesuai' : 'belum';
+  const reason = verdict === 'kurang'
+    ? (doseVerdict === 'kurang' ? `dosis NPK ${fmt(N.actual, 1)} kg/pohon/tahun di bawah prediksi untuk ${fmt(N.kurangHa, 0)} ha`
+      : M.achTon < 0.8 ? `hasil ${pct(M.achTon)} dari standar Marihat${M.achBjr && M.achBjr < 0.85 ? ` dan BJR ${pct(M.achBjr)} dari standar` : ''}`
+      : `BJR ${pct(M.achBjr)} dari standar Marihat untuk umurnya`)
+    : verdict === 'berlebih' ? `dosis NPK ${fmt(N.actual, 1)} kg/pohon/tahun di atas prediksi untuk ${fmt(N.lebihHa, 0)} ha`
+    : verdict === 'sesuai' ? (M ? `hasil ${pct(M.achTon)} dari standar Marihat` : 'dosis sesuai prediksi')
+    : 'data hasil per umur tanaman dan dosis pupuk belum cukup';
+  return { verdict, label: STATUS_PUPUK_LABEL[verdict], reason, evidence: ev.slice(0, 6), doseVerdict };
+}
+
+function describeFertStatus(d) {
+  const F = d.fertStatus;
+  if (!F) return 'STATUS PEMUPUKAN: tidak dapat dinilai.';
+  const L = [`STATUS PEMUPUKAN (PESAN UTAMA bagian pupuk): ${F.label} — ${F.reason}. ${STATUS_PUPUK_SARAN}. ` +
+    'Angka di bawah hanya bukti pendukung; jangan menuliskannya sebagai dosis anjuran.'];
+  F.evidence.forEach(e => L.push(`- ${e.indikator}: kebun ${e.kebun} | acuan ${e.acuan} | ${e.arti}${e.arah === 'kurang' ? ' (mendukung indikasi kurang)' : e.arah === 'lebih' ? ' (mendukung indikasi berlebih)' : ''}.`));
+  if (F.verdict !== 'berlebih' && !F.doseVerdict) L.push('- Kelebihan pupuk hanya bisa dinilai bila dosis aktual kebun diisi di sheet (label "Dosis NPK Aktual").');
+  if (F.verdict === 'kurang' || F.verdict === 'berlebih') L.push(`PERLU DICEK: ${F.label.toLowerCase()} (${F.reason}); ${STATUS_PUPUK_SARAN.toLowerCase()}.`);
+  return L.join('\n');
+}
+
+/** Baris tabel bukti status pemupukan untuk slide lampiran + baris kesimpulan. */
+function fertStatusTableRows(d) {
+  const F = d.fertStatus;
+  if (!F) return null;
+  return F.evidence.map(e => [e.indikator, e.kebun, e.acuan, e.arti])
+    .concat([[`Kesimpulan: ${F.label}`, '', '', STATUS_PUPUK_SARAN]]);
+}

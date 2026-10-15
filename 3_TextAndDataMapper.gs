@@ -373,6 +373,7 @@ function getSheetData(sheet) {
   // setelah tabel hara sheet "pupuk", dosis NPK aktual, dan harga NPK dibaca.
   d.fertilizer = buildFertilizerNeed(d);
   d.npk = d.fertilizer;
+  d.fertStatus = buildFertilizerStatus(d);
   d.flow = buildFlow(d);
   // Tonase = berat janjang DIPANEN: penjualan hanya dari janjang yang terjual -> tonase × (terjual ÷ dipanen) × harga
   if (DECK_CONFIG.TONASE_BASIS !== 'terjual' && d.flowSold.length && d.flowPanen.length) {

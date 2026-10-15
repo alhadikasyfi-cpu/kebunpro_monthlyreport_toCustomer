@@ -187,13 +187,14 @@ const RECO_CATALOG = [
       return { evidence: `jenis tanah belum tercatat untuk ${S.unknownCount} blok (${fmt(S.unknownHa, 1)} ha, ${fmt(S.unknownPct, 0)}% luas)`,
                priority: S.unknownPct >= 50 || (d.marihat && d.marihat.achTon < 0.7) ? 'tinggi' : 'sedang' }; } },
 
-  { code: 'R23', title: 'Lakukan uji daun untuk status hara',
-    action: 'Ambil contoh daun pelepah ke-17 per blok sejenis untuk melihat kekurangan hara yang sebenarnya sebelum menetapkan dosis pupuk.',
-    signals: 'BJR atau produktivitas jauh di bawah standar Marihat untuk umurnya; yield turun tanpa sebab pencatatan.',
-    topics: ['bjr', 'marihat', 'pupuk'],
-    when: d => { const M = d.marihat; if (!M) return null;
-      const low = (M.achBjr && M.achBjr < 0.8) || M.achTon < 0.7;
-      return low ? { evidence: `produktivitas ${fmtPct(M.achTon * 100, 0)}${M.achBjr ? `, BJR ${fmtPct(M.achBjr * 100, 0)}` : ''} dari standar Marihat ${M.cls}`, priority: M.achTon < 0.5 ? 'tinggi' : 'sedang' } : null; } },
+  { code: 'R23', title: 'Pastikan status pupuk lewat uji daun dan tanah',
+    action: 'Pohon terindikasi kurang atau kelebihan pupuk; ambil contoh daun (pelepah ke-17) dan tanah per kelompok blok sejenis untuk memastikan hara yang kurang atau berlebih sebelum mengubah dosis pupuk.',
+    signals: 'STATUS PEMUPUKAN di paket = indikasi kurang pupuk atau indikasi kelebihan pupuk (hasil jauh di bawah standar Marihat, BJR rendah, dosis aktual menyimpang, atau pemupukan tidak tercatat).',
+    topics: ['pupuk', 'marihat', 'bjr'],
+    when: d => { const F = d.fertStatus; if (!F) return null;
+      if (F.verdict === 'kurang' || F.verdict === 'berlebih') return { evidence: `${F.label.toLowerCase()}: ${F.reason}`, priority: 'tinggi' };
+      if (F.verdict === 'belum') return { evidence: 'status pupuk belum dapat dinilai dari data kebun', priority: 'sedang' };
+      return null; } },
 
   { code: 'R24', title: 'Sesuaikan pupuk dengan tanah dan umur',
     action: 'Terapkan dosis NPK per kelompok blok sesuai umur tanaman dan jenis tanah (rekomendasi umum di lampiran), konfirmasi dengan uji tanah/daun, lalu siapkan pengadaan pupuk sesuai kebutuhan setahun.',
@@ -202,9 +203,7 @@ const RECO_CATALOG = [
     when: d => { const S = d.soil, N = d.npk; if (!N) return null;
       if (N.kurangHa) return { evidence: `dosis NPK ${fmt(N.actual, 1)} kg/pohon/tahun di bawah acuan untuk ${fmt(N.kurangHa, 1)} ha; risiko produksi turun`, priority: 'tinggi' };
       if (N.lebihHa) return { evidence: `dosis NPK ${fmt(N.actual, 1)} kg/pohon/tahun di atas acuan untuk ${fmt(N.lebihHa, 1)} ha${N.lebihRp ? ` (≈ ${fmtRp(N.lebihRp)}/tahun terbuang)` : ''}`, priority: 'tinggi' };
-      if (!S || S.knownPct <= 0) return null;
-      const r = N.rows.find(x => x.soilKnown) || N.rows[0];
-      return { evidence: `${fmt(S.knownPct, 0)}% luas tercatat jenis tanahnya; contoh ${r.age.toLowerCase()} tanah ${r.soil.toLowerCase()}: NPK ${npkRange(r)} kg/pohon/tahun; total ${fmt(N.tonLo, 0)}–${fmt(N.tonHi, 0)} ton/tahun`, priority: 'sedang' }; } },
+      return null; } },   // tanpa dosis aktual yang menyimpang, cukup R23 (uji daun & tanah) agar pesan tidak bertumpuk
 
   { code: 'R17', title: 'Pertahankan praktik yang sudah baik',
     action: 'Dokumentasikan praktik panen dan perawatan yang membuat kinerja naik agar tetap dijalankan.',

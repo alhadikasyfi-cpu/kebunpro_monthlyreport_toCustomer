@@ -54,7 +54,7 @@ const DECK_CONFIG = {
       codes: ['R02', 'R03', 'R05', 'R06', 'R08', 'R16', 'R24'] },
     { name: 'Uji Tanah Dokter Sawit', short: 'analisis hara tanah',
       benefit: 'pengambilan contoh dan analisis tanah per blok/jenis tanah (pH, C-organik, N, P, K, Mg, KTK) sebagai dasar dosis pupuk; wajib bila jenis tanah belum tercatat',
-      codes: ['R04', 'R22'] },
+      codes: ['R04', 'R22', 'R23'] },
     { name: 'Uji Daun Dokter Sawit', short: 'analisis hara daun',
       benefit: 'analisis contoh daun (pelepah ke-17) untuk melihat status hara tanaman yang sebenarnya; cocok bila BJR atau produktivitas jauh di bawah standar',
       codes: ['R04', 'R23'] },

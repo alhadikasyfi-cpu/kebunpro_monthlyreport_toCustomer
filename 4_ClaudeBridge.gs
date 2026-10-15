@@ -235,7 +235,8 @@ ${describeRelations(data)}
 DATA BLOK
 ${describeBlocks(data)}
 
-JENIS TANAH & KEBUTUHAN PUPUK (dasar rekomendasi uji tanah, uji daun, dan pupuk)
+STATUS PEMUPUKAN, JENIS TANAH & BUKTI PENDUKUNG (dasar rekomendasi uji daun dan uji tanah Dokter Sawit)
+${describeFertStatus(data)}
 ${describeSoil(data)}
 ${describeNpk(data)}
 ${describeFertilizer(data)}

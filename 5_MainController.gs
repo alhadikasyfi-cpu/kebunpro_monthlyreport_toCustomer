@@ -273,6 +273,7 @@ function loadSheetData(sheet) {
   try { d.haraSheetRows = readHaraVegetatif(sheet.getParent ? sheet.getParent() : null); } catch (e) { d.haraSheetRows = 0; }
   d.fertilizer = buildFertilizerNeed(d);
   d.npk = d.fertilizer;
+  d.fertStatus = buildFertilizerStatus(d);
   return d;
 }
 
@@ -696,16 +697,19 @@ function buildTopics(d) {
       { colWidths: [2.3, 1.1, 1.1, 0.9, 3.2], fontSize: DECK_CONFIG.TYPE.TABLE_CELL, headerSize: DECK_CONFIG.TYPE.TABLE_HEADER, rowHeight: 25, headerHeight: 36, numCols: [1, 2, 3] })
   });
   // Rekomendasi pupuk PREDIKSI per kelompok blok (umur × jenis tanah; Permentan 131/2013); dosis presisi lewat uji tanah/daun Dokter Sawit
-  const NR = npkTableRows(d);
-  if (NR) T.push({
-    id: 'pupuk', title: 'Rekomendasi Pupuk Prediksi per Umur dan Tanah',
-    visual: `tabel rekomendasi pupuk prediksi per kelompok blok: kelas umur, jenis tanah, luas, Urea/SP-36/MOP/Kieserit kg/pohon/tahun (Permentan 131/2013, gambut +10%), setara ${NPK_FORMULA.name} kg/pohon/tahun, baris total ton/tahun` + (d.npk.actual !== null ? ', status dosis aktual (kurang/sesuai/berlebih)' : ''),
-    facts: describeNpk(d) + '\n' + describeFertilizer(d),
-    fallback: (() => { const r = d.npk.rows[0];
-      return `Prediksi pupuk untuk kelompok blok terluas (${r.age}, tanah ${r.soil.toLowerCase()}, ${fmt(r.ha, 0)} ha): Urea ${fmt(r.dose.urea, 1)}, SP-36 ${fmt(r.dose.sp36, 1)}, MOP ${fmt(r.dose.mop, 1)}, Kieserit ${fmt(r.dose.kies, 1)} kg/pohon/tahun. Dosis presisi perlu uji tanah dan uji daun.`; })(),
-    draw: b => drawTable(b, ['Umur', 'Jenis tanah', 'Luas\nha', 'Urea/SP-36/MOP/Kies\nkg/pohon/tahun', `NPK\n${NPK_FORMULA.name.replace('NPK ', '')}`].concat(d.npk.actual !== null ? [`Aktual\n${fmt(d.npk.actual, 1)} kg`] : []), NR,
-      { colWidths: d.npk.actual !== null ? [1.5, 1.9, 0.9, 2.6, 1.2, 1.2] : [1.6, 2.1, 1.0, 2.8, 1.4], fontSize: DECK_CONFIG.TYPE.TABLE_CELL, headerSize: DECK_CONFIG.TYPE.TABLE_HEADER, rowHeight: 25, headerHeight: 36, numCols: [2, 3, 4],
-        cellColor: (r, c, txt) => (txt === 'kurang' || txt === 'berlebih' ? DECK_CONFIG.COLOR.DANGER : txt === 'sesuai' ? DECK_CONFIG.COLOR.GREEN : null) })
+  // STATUS PEMUPUKAN: pesan utama = indikasi kurang / kelebihan pupuk -> pastikan dengan Uji Daun & Uji Tanah Dokter Sawit.
+  // Marihat, dosis prediksi (Permentan 131/2013), catatan pemupukan, dan jenis tanah hanya bukti pendukung.
+  const FS = d.fertStatus, FSR = fertStatusTableRows(d);
+  if (FS && FSR && FS.evidence.length) T.push({
+    id: 'pupuk', title: 'Status Pemupukan Kebun',
+    visual: 'tabel bukti status pemupukan: indikator, angka kebun, acuan, arti (merah = mendukung indikasi kurang/berlebih), ditutup baris kesimpulan dan saran uji daun & uji tanah Dokter Sawit',
+    facts: describeFertStatus(d) + '\n' + describeNpk(d) + '\n' + describeFertilizer(d),
+    fallback: `${FS.label}: ${FS.reason}. ${STATUS_PUPUK_SARAN} agar dosis pupuk tiap blok tepat.`,
+    draw: b => drawTable(b, ['Indikator', 'Kebun', 'Acuan', 'Arti'], FSR,
+      { colWidths: [1.9, 1.9, 1.8, 3.4], fontSize: DECK_CONFIG.TYPE.TABLE_CELL, headerSize: DECK_CONFIG.TYPE.TABLE_HEADER, rowHeight: 25, headerHeight: 25,
+        cellColor: (r, c) => { const e = FS.evidence[r - 1];
+          if (!e) return c === 3 ? DECK_CONFIG.COLOR.GREEN : null;                       // baris kesimpulan: saran hijau
+          return c === 3 && e.arah !== 'netral' ? DECK_CONFIG.COLOR.DANGER : null; } })
   });
 
   const up = upkeepItems(d);
@@ -1029,7 +1033,9 @@ const MAIN_SUMMARY = {
         { label: 'Janjang per pokok', unit: 'janjang/pokok/tahun', cur: M.realRjt, ref: M.pot.rjt, f: v => fmt(v, 1), goodUp: true },
         S ? { label: 'Data jenis tanah', unit: '% luas blok tercatat', cur: S.knownPct, ref: 100, f: v => `${fmt(v, 0)}%`, goodUp: true } : null
       ].filter(Boolean),
-      caption: S && S.unknownHa ? `Jenis tanah ${fmt(S.unknownPct, 0)}% luas belum tercatat, sehingga dosis pupuk belum bisa disesuaikan dengan tanah.` : '',
+      // pesan pupuk didahulukan: indikasi kurang/kelebihan pupuk + ajakan uji daun & tanah
+      caption: d.fertStatus && d.fertStatus.verdict !== 'sesuai' ? `${d.fertStatus.label}: ${d.fertStatus.reason}. ${STATUS_PUPUK_SARAN}.`
+        : S && S.unknownHa ? `Jenis tanah ${fmt(S.unknownPct, 0)}% luas belum tercatat, sehingga dosis pupuk belum bisa disesuaikan dengan tanah.` : '',
       desc: 'produktivitas, BJR, janjang per pokok, dan kelengkapan data tanah vs standar Marihat'
     };
     const y = seriesStats(d.yield), j = seriesStats(d.jjgHa), bj = seriesStats(d.bjr);
@@ -1134,11 +1140,13 @@ function dataHeadline(id, d) {
     replanting: () => (B && B.replant.length ? [`${B.replant.length} blok (${fmt(B.replant.reduce((x, b) => x + b.ha, 0), 0)} ha) lewat umur ekonomis`] : null),
     tanah: () => (!S ? null : S.unknownPct >= 50 ? [`${fmt(S.unknownPct, 0)}% luas belum ada data jenis tanah`, 'Jenis tanah sebagian besar belum tercatat']
       : S.dominant ? [`Tanah dominan ${S.dominant.name.toLowerCase()}, ${fmt(S.dominant.pct, 0)}% luas`, `Tanah dominan ${S.dominant.name.toLowerCase()}`] : null),
-    pupuk: () => { const NP = d.npk; if (!NP) return FZ ? [`Kebutuhan pupuk ±${fmt(FZ.totalTon, 0)} ton/tahun`] : null;
-      if (NP.kurangHa) return [`Dosis NPK di bawah acuan untuk ${fmt(NP.kurangHa, 0)} ha`];
-      if (NP.lebihHa) return [`Dosis NPK di atas acuan untuk ${fmt(NP.lebihHa, 0)} ha`];
-      const r = NP.rows[0];
-      return [`Prediksi pupuk ${r.ageShort}: MOP ${fmt(r.dose.mop, 1)} kg/pohon/tahun`, `Prediksi kebutuhan pupuk ±${fmt(NP.totalTon, 0)} ton/tahun`]; },
+    pupuk: () => { const F2 = d.fertStatus; if (!F2) return null;
+      const M2 = d.marihat, pc = v => `${fmt(v * 100, 0)}%`;
+      if (F2.verdict === 'kurang') return (F2.doseVerdict === 'kurang' ? [`Indikasi kurang pupuk di ${fmt(d.npk.kurangHa, 0)} ha`]
+        : M2.achTon < 0.8 ? [`Indikasi kurang pupuk: hasil ${pc(M2.achTon)} dari standar`] : [`Indikasi kurang pupuk: BJR ${pc(M2.achBjr)} dari standar`]).concat(['Indikasi kurang pupuk, perlu uji daun']);
+      if (F2.verdict === 'berlebih') return [`Indikasi kelebihan pupuk di ${fmt(d.npk.lebihHa, 0)} ha`, 'Indikasi kelebihan pupuk'];
+      if (F2.verdict === 'sesuai') return ['Tidak ada indikasi kurang pupuk'];
+      return ['Status pupuk perlu dicek lewat uji daun']; },
     m_keuangan: laba,
     laba: laba,
     m_tim: () => {
@@ -1223,7 +1231,7 @@ function drawProfitChart(b, rev, cost) {
 
 /** Nama pendek slide lampiran untuk tombol (maks. ±18 karakter) dan Daftar Lampiran. */
 const SHORT_TITLES = {
-  scorecard: 'Tabel kinerja', tanah: 'Jenis tanah', pupuk: 'Prediksi pupuk', produksi: 'Tren TBS terjual', panen: 'Luas panen', yield: 'Yield per ha', marihat: 'Std. Marihat',
+  scorecard: 'Tabel kinerja', tanah: 'Jenis tanah', pupuk: 'Status pupuk', produksi: 'Tren TBS terjual', panen: 'Luas panen', yield: 'Yield per ha', marihat: 'Std. Marihat',
   jjg: 'Janjang/ha', bjr: 'BJR', umur: 'Umur tanaman', umuryield: 'Umur vs yield', replanting: 'Replanting',
   alurjjg: 'Alur janjang', restan: 'Panen vs muat', tanpaberat: 'Tanpa berat', blokunsale: 'Blok tanpa jual',
   laba: 'Laba kotor', biayakg: 'Biaya per kg', efisiensi: 'Porsi biaya', biayakomposisi: 'Komposisi biaya', biayaha: 'Biaya per ha',
@@ -1287,9 +1295,9 @@ const STORY = [
   { id: 'tanah', section: 'Kondisi Tanaman', title: 'Jenis Tanah Blok',
     q: 'Di jenis tanah apa blok-blok kebun berada, apa kendala haranya, dan berapa luas yang belum tercatat jenis tanahnya?',
     link: 'Selain umur, jenis tanah menentukan hara yang kurang dan dosis pupuk yang tepat untuk setiap pokok.' },
-  { id: 'pupuk', section: 'Kondisi Tanaman', title: 'Rekomendasi Pupuk Prediksi per Umur dan Tanah',
-    q: 'Berapa prediksi pupuk per pohon per tahun untuk tiap kelompok blok (umur tanaman × jenis tanah), apakah dosis kebun kurang atau berlebih, dan berapa kebutuhan setahun?',
-    link: 'Dari umur tanaman dan jenis tanah tiap blok (slide sebelumnya) disusun prediksi pupuk berdasarkan Permentan 131/2013; dosis presisi dikonfirmasi uji tanah dan uji daun.' },
+  { id: 'pupuk', section: 'Kondisi Tanaman', title: 'Status Pemupukan Kebun',
+    q: 'Apakah pohon di kebun ini terindikasi kurang atau kelebihan pupuk, apa buktinya, dan bagaimana memastikannya?',
+    link: 'Dari hasil per umur tanaman, catatan pemupukan, dan jenis tanah (slide sebelumnya) dinilai indikasi kurang atau kelebihan pupuk; kepastiannya lewat uji daun dan uji tanah Dokter Sawit.' },
   { id: 'umuryield', section: 'Kondisi Tanaman', title: 'Umur Blok Dipanen per Bulan',
     q: 'Apakah bulan yang didominasi blok tua menghasilkan yield lebih rendah?',
     link: 'Menghubungkan struktur umur (slide sebelumnya) dengan yield bulanan.' },
