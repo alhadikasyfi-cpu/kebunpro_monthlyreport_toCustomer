@@ -389,8 +389,12 @@ function drawConclusionCards(b, actions, linkOf) {
     const hasBtn = linkOf && pages.length && linkOf(pages[0]);   // tombol bukti menggantikan teks "Dasar: slide …"
     return [a.priority === 'tinggi' ? 'Prioritas tinggi' : 'Prioritas sedang', a.timeline || null, !hasBtn && pages.length ? `Dasar: slide ${pages.join(', ')}` : null].filter(Boolean).join(' · ');
   };
-  // Produk SawitPRO: satu baris pendek, mis. "Solusi SawitPRO: Dokter Sawit (konsultasi agronomis)"
-  const prodText = a => (a.product && a.product.name ? `Solusi SawitPRO: ${a.product.name}${a.product.short ? ` (${a.product.short})` : ''}` : '');
+  // Produk SawitPRO: satu produk "Solusi SawitPRO: Dokter Sawit (konsultasi agronomis)"; dua produk cukup namanya
+  const prodText = a => {
+    const ps = (Array.isArray(a.product) ? a.product : (a.product ? [a.product] : [])).filter(p => p && p.name).slice(0, 2);
+    if (!ps.length) return '';
+    return ps.length === 1 ? `Solusi SawitPRO: ${ps[0].name}${ps[0].short ? ` (${ps[0].short})` : ''}` : `Solusi SawitPRO: ${ps.map(p => p.name).join(', ')}`;
+  };
   const metaGap = 9;
   const parts = a => {
     const tH = Math.max(d, estLines(a.title, T.CARD_TITLE, titleW, true) * T.CARD_TITLE * 1.3);
@@ -655,6 +659,62 @@ function drawStackedBarChart(b, parts, o) {
     if (totals[i] > 0) b.label((o.labelFmt || (v => fmt(v, 0)))(totals[i]), cx, f.yOf(totals[i]) - 15, Math.max(f.step + 8, 36), { weight: DECK_CONFIG.WEIGHT.HEAVY });
   });
   chLegend(b, parts.map(pt => ({ name: pt.name, type: 'bar', color: pt.color })));
+}
+
+/* ------------------------------------------------------------------------- */
+/* Grafik ringkasan slide utama: realisasi vs pembanding (dibaca 30 detik)    */
+/* ------------------------------------------------------------------------- */
+
+/**
+ * Satu baris per indikator: batang pembanding (abu) di atas, batang bulan laporan (hijau = baik, merah = perlu
+ * perhatian) di bawah, nilai di ujung batang, dan selisih % di kolom kanan. Skala tiap baris sendiri-sendiri,
+ * jadi satuan berbeda boleh dalam satu grafik.
+ * s: {curLabel, refLabel, rows:[{label, unit, cur, ref, f, goodUp (true|false|null)}], caption}
+ */
+function drawCompareRows(b, s) {
+  const C = DECK_CONFIG.COLOR, A = DECK_CONFIG.LAYOUT.CONTENT, T = DECK_CONFIG.TYPE, W = DECK_CONFIG.WEIGHT;
+  const rows = (s.rows || []).filter(r => r.cur !== null && r.cur !== undefined).slice(0, 4);
+  if (!rows.length) return;
+  // Legenda: warna selalu disertai kata
+  const legY = A.top + 2;
+  b.rect(A.left, legY + 3, 10, 8, C.GREEN);
+  b.label(s.curLabel, A.left + 14, legY, estWidth(s.curLabel, T.CAPTION) + 16, { align: 'START', color: C.INK, weight: W.STRONG });
+  const lx2 = A.left + 14 + estWidth(s.curLabel, T.CAPTION) + 26;
+  b.rect(lx2, legY + 3, 10, 8, C.NEUTRAL);
+  b.label(s.refLabel, lx2 + 14, legY, estWidth(s.refLabel, T.CAPTION) + 16, { align: 'START', color: C.MUTED });
+
+  const capH = s.caption ? estLines(s.caption, T.CAPTION, A.width) * T.CAPTION * 1.4 + 6 : 0;
+  const top = A.top + 22, avail = A.top + A.height - capH - top;
+  const rowH = Math.min(72, avail / rows.length);
+  const labelW = 128, deltaW = 62, valW = 70;
+  const x0 = A.left + labelW, barMax = A.width - labelW - deltaW - valW;
+  rows.forEach((r, i) => {
+    const y = top + i * rowH;
+    if (i) b.line(A.left, y, A.left + A.width, y, C.DIVIDER, 0.75);
+    // Label indikator (2 baris: nama tebal + satuan)
+    b.text(r.label, A.left, y + rowH / 2 - 15, labelW - 8, 15, { size: T.BODY, weight: W.STRONG, color: C.INK, align: 'START', valign: 'BOTTOM', noGroup: true, nowrap: true });
+    b.text(r.unit || ' ', A.left, y + rowH / 2 + 1, labelW - 8, 12, { size: T.CAPTION, color: C.MUTED, align: 'START', valign: 'TOP', noGroup: true, nowrap: true });
+    const hasRef = r.ref !== null && r.ref !== undefined;
+    const max = Math.max(Math.abs(r.cur), hasRef ? Math.abs(r.ref) : 0) || 1;
+    const delta = hasRef && r.ref ? ((r.cur - r.ref) / Math.abs(r.ref)) * 100 : null;
+    const good = delta === null || r.goodUp === null || r.goodUp === undefined || Math.abs(delta) < 1 ? null : (delta > 0) === r.goodUp;
+    const curColor = r.cur < 0 ? C.DANGER : good === false ? C.DANGER : C.GREEN;
+    const f = r.f || (v => fmt(v, 0));
+    const refY = y + rowH / 2 - 13, curY = y + rowH / 2 + 1;
+    if (hasRef) {
+      const w = Math.max(2, barMax * Math.abs(r.ref) / max);
+      b.rect(x0, refY, w, 10, C.NEUTRAL);
+      b.label(f(r.ref), x0 + w + 4, refY - 2, valW, { align: 'START', color: C.MUTED });
+    }
+    const wc = Math.max(2, barMax * Math.abs(r.cur) / max);
+    b.rect(x0, curY, wc, 13, curColor);
+    b.label(f(r.cur), x0 + wc + 4, curY - 0.5, valW, { align: 'START', weight: W.HEAVY, color: curColor });
+    // Selisih % (warna mengikuti arti baik/buruk, selalu disertai tanda panah)
+    const dTxt = delta === null ? '–' : `${delta >= 0 ? '▲' : '▼'} ${fmt(Math.abs(delta), 0)}%`;
+    b.text(dTxt, A.left + A.width - deltaW, y + rowH / 2 - 8, deltaW, 16, { size: T.BODY, weight: W.HEAVY,
+      color: good === null ? C.INK : good ? C.GREEN : C.DANGER, align: 'END', valign: 'MIDDLE', noGroup: true, nowrap: true });
+  });
+  if (s.caption) b.text(s.caption, A.left, A.top + A.height - capH + 4, A.width, capH - 4, { size: T.CAPTION, color: C.MUTED, align: 'START', valign: 'TOP', lineSpacing: 125, noGroup: true });
 }
 
 /* ------------------------------------------------------------------------- */

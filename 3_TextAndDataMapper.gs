@@ -101,6 +101,13 @@ function findCell(values, aliases) {
       if (list.indexOf(norm(values[r][c])) >= 0) return { r, c };
     }
   }
+  // Cadangan: header dengan keterangan dalam kurung, mis. "block sale (name, luas, tahun tanam, soil type)" -> "block sale"
+  const bare = v => norm(v).replace(/\s*\(.*\)\s*$/, '');
+  for (let r = 0; r < values.length; r++) {
+    for (let c = 0; c < values[r].length; c++) {
+      if (typeof values[r][c] === 'string' && /\(.*\)\s*$/.test(values[r][c]) && list.indexOf(bare(values[r][c])) >= 0) return { r, c };
+    }
+  }
   return null;
 }
 
@@ -342,6 +349,9 @@ function getSheetData(sheet) {
   d.landClassAssumed = !lc;
   d.sph = parseNum(d.sphRaw) || DECK_CONFIG.SPH_DEFAULT;
   d.sphAssumed = !parseNum(d.sphRaw);
+  // Jenis tanah per blok & kebutuhan pupuk indikatif (file 9)
+  d.soil = buildSoilAnalytics(d);
+  d.fertilizer = buildFertilizerNeed(d);
   // Tonase = berat janjang TERJUAL: BJR sebenarnya = tonase ÷ janjang terjual (kumulatif), dan
   // produksi panen diestimasi = janjang dipanen × BJR tersebut (untuk dibandingkan dengan standar Marihat).
   d.bjrSoldCum = null; d.bjrSoldMonthly = []; d.produksiPanen = null;
@@ -384,13 +394,18 @@ function getSheetData(sheet) {
 /* Analisis blok (nama, luas, tahun tanam)                                   */
 /* ------------------------------------------------------------------------- */
 
-/** "E4, 4.5 ha, 2010; A9, 2.48 ha, 1998" -> [{name, ha, year|null}] */
+/**
+ * "E4, 4.5 ha, 2010, Gambut; A9, 2.48 ha, 1998, -" -> [{name, ha, year|null, soil|null}]
+ * Bagian ke-4 (jenis tanah) opsional; "-" atau kosong = belum tercatat. Tahun 0 = belum tercatat.
+ */
 function parseBlocks(text) {
   return String(text || '').split(';').map(t => t.trim()).filter(Boolean).map(t => {
-    const m = t.match(/^(.*?),\s*([\d.,]+)\s*ha\s*,\s*(\d{1,4})\s*$/i);
+    const m = t.match(/^(.*?),\s*([\d.,]+)\s*ha\s*,\s*(\d{1,4})\s*(?:,\s*(.*?))?\s*$/i);
     if (!m) return null;
     const year = Number(m[3]);
-    return { name: m[1].trim(), ha: parseNum(m[2]) || 0, year: year >= 1950 ? year : null };
+    const soil = String(m[4] || '').trim();
+    return { name: m[1].trim(), ha: parseNum(m[2]) || 0, year: year >= 1950 ? year : null,
+             soil: soil && !/^[-–—]+$/.test(soil) ? soil : null };
   }).filter(Boolean);
 }
 
@@ -410,8 +425,9 @@ function buildBlockAnalytics(d) {
     let haSum = 0, ageHa = 0, ageHaBase = 0, oldHa = 0, newCount = 0, newHa = 0;
     list.forEach(b => {
       const key = `${b.name}|${b.ha}|${b.year}`;
-      if (!uniq[key]) uniq[key] = { name: b.name, ha: b.ha, year: b.year, months: 0 };
+      if (!uniq[key]) uniq[key] = { name: b.name, ha: b.ha, year: b.year, soil: null, months: 0 };
       uniq[key].months++;
+      if (b.soil) uniq[key].soil = b.soil;   // jenis tanah: isian terakhir yang tercatat
       if (!seenBefore[key] && Object.keys(seenBefore).length) { newCount++; newHa += b.ha; }
       haSum += b.ha;
       if (b.year) {
@@ -835,8 +851,9 @@ function buildUnsaleAnalytics(d) {
   const map = {};
   d.blocksUnsaleRaw.forEach(row => parseBlocks(row.value).forEach(b => {
     const k = `${b.name}|${b.ha}|${b.year}`;
-    if (!map[k]) map[k] = { name: b.name, ha: b.ha, year: b.year, months: 0, last: null };
+    if (!map[k]) map[k] = { name: b.name, ha: b.ha, year: b.year, soil: null, months: 0, last: null };
     map[k].months++; map[k].last = row.p;
+    if (b.soil) map[k].soil = b.soil;
   }));
   const blocks = Object.keys(map).map(k => map[k]).sort((a, b) => b.months - a.months || b.ha - a.ha);
   const monthly = d.blocksUnsaleRaw.map(row => {
@@ -1340,7 +1357,37 @@ function buildFlow(d) {
   });
 
   const nwTot = d.flowSoldNoWeight && d.flowSoldNoWeight.length ? months.reduce((s, p) => s + (valAt(d.flowSoldNoWeight, p) || 0), 0) : 0;
+
+  // Kebocoran PER BULAN: bulan laporan (terakhir) dibandingkan bulan sebelumnya. Dinilai dengan BJR & harga bulan itu.
+  const priceSer = d.hargaJual.length ? d.hargaJual : d.revKg;
+  const snapshot = p => {
+    const vals = stages.map(st => valAt(d[st.key], p));
+    const bjrM = valAt(d.bjrSoldMonthly || [], p), hM = valAt(priceSer, p);
+    const bjrV = ok(bjrM) ? bjrM : bjrUsed, priceV = hM || price;
+    const rpM = j => (bjrV && priceV ? j * bjrV * priceV : null);
+    const stepsM = [];
+    for (let i = 1; i < stages.length; i++) {
+      const gap = vals[i - 1] - vals[i], pct = vals[i - 1] ? (gap / vals[i - 1]) * 100 : 0;
+      stepsM.push({ from: stages[i - 1].name, to: stages[i].name, role: stages[i].role, gap, pct,
+        loss: pct > T.FLOW_LOSS_PCT, excess: -pct > T.FLOW_EXCESS_PCT, rp: gap > 0 ? rpM(gap) : null, rpLow: null });
+    }
+    const loss = Math.max(0, vals[0] - vals[vals.length - 1]);
+    const nw = valAt(d.flowSoldNoWeight || [], p) || 0;
+    return {
+      p, label: monthShort(p), months: 1, bjrUsed: bjrV, price: priceV,
+      stages: stages.map((st, i) => ({ name: st.name, role: st.role, total: vals[i],
+        note: st.key === 'flowSold' && nw ? `${fmt(nw, 0)} tanpa berat` : '' })),
+      steps: stepsM, lossJjg: loss, lossPct: vals[0] ? (loss / vals[0]) * 100 : 0, lossRp: loss ? rpM(loss) : null, lossRpLow: null,
+      overSold: vals[vals.length - 1] > vals[0] * (1 + T.FLOW_EXCESS_PCT / 100),
+      overSoldPct: vals[0] ? ((vals[vals.length - 1] - vals[0]) / vals[0]) * 100 : 0,
+      soldNoWeight: nw, worst: stepsM.filter(s => s.gap > 0 && s.pct >= 1).sort((a, b) => b.gap - a.gap)[0] || null
+    };
+  };
+  const monthly = months.map(snapshot);
+  const cur = monthly[monthly.length - 1] || null, prevM = monthly.length > 1 ? monthly[monthly.length - 2] : null;
+
   return {
+    monthly, cur, prev: prevM,
     soldNoWeight: nwTot, overSold, overSoldPct, shortMonths, tripMerged: !!tripSame,
     stages: stages.map((st, i) => ({ name: st.name, role: st.role, total: tot[i],
       note: st.key === 'flowSold' && nwTot ? `${fmt(nwTot, 0)} tanpa berat` : '' })),
@@ -1354,8 +1401,25 @@ function buildFlow(d) {
 function describeFlow(d) {
   const F = d.flow;
   if (!F) return 'Alur janjang: tabel panen-muat-trip-terjual belum tersedia.';
-  const L = [`ALUR JANJANG (kumulatif ${F.months} bulan, ${monthLong(F.firstP)}–${monthLong(F.lastP)}): ` +
-    F.stages.map(s => `${s.name} ${fmt(s.total, 0)}${s.note ? ` (${s.note})` : ''}`).join(' → ') + '.'];
+  const L = [];
+  // Bulan laporan vs bulan sebelumnya: angka utama untuk owner (judul, KPI, slide ringkasan)
+  const mline = s => s.overSold
+    ? `${monthLong(s.p)}: dipanen ${fmt(s.stages[0].total, 0)}, terjual ${fmt(s.stages[s.stages.length - 1].total, 0)} janjang (terjual ${fmt(s.overSoldPct, 0)}% lebih banyak dari dipanen; kebocoran bulan ini TIDAK BISA DIUKUR, kemungkinan restan bulan lalu ikut terjual atau catatan panen kurang)`
+    : `${monthLong(s.p)}: dipanen ${fmt(s.stages[0].total, 0)}, terjual ${fmt(s.stages[s.stages.length - 1].total, 0)} janjang; hilang ${fmt(s.lossJjg, 0)} janjang (${fmt(s.lossPct, 1)}%)` +
+      (s.lossRp ? ` ≈ ${fmtRp(s.lossRp)} (BJR ${fmt(s.bjrUsed, 1)} kg × harga Rp${fmt(s.price, 0)}/kg bulan itu)` : '') + (s.worst ? `; terbesar di ${s.worst.from} → ${s.worst.to}` : '');
+  if (F.cur) {
+    L.push(`KEBOCORAN BULAN LAPORAN (pakai angka ini untuk judul, KPI, dan ringkasan): ${mline(F.cur)}.`);
+    if (F.prev) {
+      L.push(`- Pembanding bulan sebelumnya: ${mline(F.prev)}.`);
+      if (!F.cur.overSold && !F.prev.overSold && F.prev.lossRp && F.cur.lossRp !== null) {
+        const ch = ((F.cur.lossRp - F.prev.lossRp) / Math.abs(F.prev.lossRp)) * 100;
+        L.push(`- Estimasi kerugian ${monthShort(F.cur.p)} ${ch >= 0 ? 'naik' : 'turun'} ${fmt(Math.abs(ch), 0)}% dibanding ${monthShort(F.prev.p)} (${fmtRp(F.cur.lossRp)} vs ${fmtRp(F.prev.lossRp)}).`);
+      }
+    }
+    L.push(`- Kerugian per bulan: ${F.monthly.map(s => `${s.label} ${s.overSold ? 'tidak terukur' : s.lossRp ? fmtRp(s.lossRp) : fmt(s.lossJjg, 0) + ' jjg'}`).join(', ')}.`);
+  }
+  L.push(`ALUR JANJANG KUMULATIF (konteks saja, ${F.months} bulan, ${monthLong(F.firstP)}–${monthLong(F.lastP)}): ` +
+    F.stages.map(s => `${s.name} ${fmt(s.total, 0)}${s.note ? ` (${s.note})` : ''}`).join(' → ') + '.');
   if (F.tripMerged) L.push('- Tahap masuk trip belum dicatat terpisah (sama dengan dimuat), jadi tidak ditampilkan di corong.');
   if (F.soldNoWeight) L.push(`- Tahap Terjual = janjang terjual dengan berat + tanpa berat; ${fmt(F.soldNoWeight, 0)} janjang (${fmtPct((F.soldNoWeight / F.stages[F.stages.length - 1].total) * 100, 0)}) terjual tanpa catatan berat.`);
   F.steps.forEach(s => {
@@ -1384,7 +1448,9 @@ function describeFlow(d) {
     const diff = Math.abs(m.mandorTotal / m.flowTotal - 1) * 100;
     L.push(`- ${m.label} mandor ${m.role} (${m.names.join(', ')}): total ${fmt(m.mandorTotal, 0)} jjg vs tabel alur ${fmt(m.flowTotal, 0)} jjg${diff > 10 ? ' (berbeda >10%, perlu dicocokkan)' : ' (cocok)'}.`);
   });
-  F.steps.filter(s => s.loss).forEach(s => L.push(`PERLU DICEK: kebocoran janjang ${s.from} → ${s.to} ${fmt(s.gap, 0)} jjg (${fmt(s.pct, 0)}%)${s.rp ? ` ≈ ${s.rpLow ? `${fmtRp(s.rpLow)}–` : ''}${fmtRp(s.rp)}` : ''}; konfirmasi ke ${s.role}.`));
+  // Temuan kebocoran memakai bulan laporan (bukan kumulatif), agar sama dengan KPI dan judul
+  const lossSrc = F.cur && !F.cur.overSold ? F.cur : null;
+  (lossSrc ? lossSrc.steps : F.steps).filter(s => s.loss).forEach(s => L.push(`PERLU DICEK: kebocoran janjang ${lossSrc ? monthLong(lossSrc.p) : 'kumulatif'} ${s.from} → ${s.to} ${fmt(s.gap, 0)} jjg (${fmt(s.pct, 0)}%)${s.rp ? ` ≈ ${fmtRp(s.rp)}` : ''}; konfirmasi ke ${s.role}.`));
   F.steps.filter(s => s.excess).forEach(s => L.push(`PERLU DICEK: janjang ${s.to.toLowerCase()} melebihi ${s.from.toLowerCase()} ${fmt(-s.gap, 0)} jjg; cek pencatatan panen dan restan awal periode.`));
   return L.join('\n');
 }

@@ -43,14 +43,24 @@ const DECK_CONFIG = {
   },
 
   // Produk SawitPRO yang boleh DISARANKAN kepada owner di rekomendasi dan temuan (dipilih Claude hanya bila relevan;
-  // bila tanpa jawaban Claude, dicocokkan otomatis dengan kode rekomendasi di `codes`).
+  // bila tanpa jawaban Claude, dicocokkan otomatis dengan kode rekomendasi di `codes`, maks. 2 produk per rekomendasi).
   // KebunPRO TIDAK dimasukkan: deck ini sendiri adalah layanan KebunPRO yang sedang dipakai owner.
   //   name  = nama produk; short = keterangan pendek di kartu rekomendasi (maks. ±22 karakter, satu baris);
   //   benefit = penjelasan untuk Claude; codes = kode rekomendasi (file 7) yang cocok.
+  // Nama dan kalimat manfaat perlu dikonfirmasi tim SawitPRO sebelum dipakai ke customer.
   SAWITPRO_PRODUCTS: [
     { name: 'Dokter Sawit', short: 'konsultasi agronomis',
       benefit: 'konsultasi agronomis berpengalaman: rekomendasi pemupukan, pengendalian hama, diagnosis penyakit, dan peningkatan produktivitas',
-      codes: ['R02', 'R03', 'R04', 'R05', 'R06', 'R08', 'R16'] }
+      codes: ['R02', 'R03', 'R05', 'R06', 'R08', 'R16', 'R24'] },
+    { name: 'Uji Tanah Dokter Sawit', short: 'analisis hara tanah',
+      benefit: 'pengambilan contoh dan analisis tanah per blok/jenis tanah (pH, C-organik, N, P, K, Mg, KTK) sebagai dasar dosis pupuk; wajib bila jenis tanah belum tercatat',
+      codes: ['R04', 'R22'] },
+    { name: 'Uji Daun Dokter Sawit', short: 'analisis hara daun',
+      benefit: 'analisis contoh daun (pelepah ke-17) untuk melihat status hara tanaman yang sebenarnya; cocok bila BJR atau produktivitas jauh di bawah standar',
+      codes: ['R04', 'R23'] },
+    { name: 'Pupuk SawitPRO', short: 'pupuk sesuai rekomendasi',
+      benefit: 'penyediaan pupuk sesuai jenis tanah dan umur tanaman, dengan volume mengikuti kebutuhan pupuk indikatif kebun (dikonfirmasi uji tanah/daun)',
+      codes: ['R24'] }
   ],
   // Periode tabel "Upkeep Cost" per activity_group di sheet (ditulis di slide & dipakai Claude).
   // Saran: isi tabel itu dengan total 12 bulan penuh yang sama dengan periode laporan, lalu ubah teks ini.
@@ -248,8 +258,10 @@ const DECK_CONFIG = {
     SALE_JJG: ['total_sale_jjg'],                          // janjang terjual yang ada beratnya
     NOWEIGHT_JJG: ['janjang_terjual_tanpa_berat'],         // janjang terjual TANPA catatan berat
     TONASE: ['total_supply_ton', 'total_tonasehasil', 'total_tonase', 'tonase', 'total tonase hasil'],
-    BLOCKS: ['block_sale', 'block (name, hectarage, planted year)', 'block', 'blok'],
-    BLOCKS_UNSALE: ['block_unsale'],                        // blok tanpa penjualan bulan itu
+    // Isi sel blok: "nama, luas ha, tahun tanam, jenis tanah; ..." (jenis tanah boleh "-" bila belum tercatat).
+    // Header yang memakai keterangan dalam kurung, mis. "block sale (name, luas, tahun tanam, soil type)", juga dikenali.
+    BLOCKS: ['block_sale', 'block sale', 'block (name, hectarage, planted year)', 'block', 'blok'],
+    BLOCKS_UNSALE: ['block_unsale', 'block unsale'],        // blok tanpa penjualan bulan itu
     BJR: ['avg_bjr_kg'],
     FLOW_PANEN: ['jjg dipanen', 'janjang dipanen'],
     FLOW_MUAT: ['jjg dimuat', 'janjang dimuat'],

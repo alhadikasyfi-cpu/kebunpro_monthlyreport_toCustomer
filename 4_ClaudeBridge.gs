@@ -219,7 +219,8 @@ ${blockPlan}
 STRUKTUR DECK
 - Slide 1 cover; slide 2 Agenda & Tujuan Pertemuan (agenda + agenda_notes); slide 3 Ringkasan Eksekutif (executive_summary + intro_notes, di atas KARTU KPI); slide ringkasan untuk owner di bawah; slide ${plan.anomTopic ? plan.anomTopic.page : '-'} Temuan Utama (anomalies); slide ${plan.conclTopic ? plan.conclTopic.page : '-'} Rekomendasi (conclusion); sisanya penutup dan LAMPIRAN (slide detail di "ALUR LAMPIRAN").
 SLIDE RINGKASAN UNTUK OWNER (deck utama, urut sesuai pertanyaan owner):
-${mains.map(m => `Slide ${m.page} [id=${m.id}] ${m.title} — pertanyaan owner: ${(m.group && m.group.question) || '-'}; merangkum lampiran: ${m.members.map(x => `slide ${x.page} ${x.title}`).join('; ') || '-'}; visual yang tampil: ${m.chartTopic.title}`).join('\n') || '-'}
+${mains.map(m => `Slide ${m.page} [id=${m.id}] ${m.title} — pertanyaan owner: ${(m.group && m.group.question) || '-'}; merangkum lampiran: ${m.members.map(x => `slide ${x.page} ${x.title}`).join('; ') || '-'}; ` +
+  (m.summary ? `visual yang tampil: grafik kesimpulan ${m.summary.desc || ''} (${m.summary.curLabel} vs ${m.summary.refLabel}): ${summaryLine(m.summary)}` : `visual yang tampil: ${m.chartTopic.title}`)).join('\n') || '-'}
 
 ALUR LAMPIRAN (sudah ditetapkan, ikuti urutannya)
 Logika besar: kinerja bulan ini (hasil, uang masuk, biaya, laba) → kebocoran janjang (uang yang hilang dari panen sampai terjual) → penyebab naik-turun hasil (JJG/ha, BJR, umur tanaman) → keuangan (laba kotor, komposisi biaya, harga, margin) → tim kerja → tindakan.
@@ -233,6 +234,10 @@ ${describeRelations(data)}
 
 DATA BLOK
 ${describeBlocks(data)}
+
+JENIS TANAH & KEBUTUHAN PUPUK (dasar rekomendasi uji tanah, uji daun, dan pupuk)
+${describeSoil(data)}
+${describeFertilizer(data)}
 
 FAKTA PER SLIDE
 ${content.filter(t => t.facts).map(t => `[${t.id}] ${t.facts}`).join('\n\n')}
@@ -256,6 +261,13 @@ ${candidates.map(c => `${c.code} ${c.title} | ${c.evidence} | slide ${c.pages.jo
     if (aliasMap.length) text = applyAliases(text, aliasMap);
   }
   return { text, id, blocks, cells: blocks.map(b => b.a1) };
+}
+
+/** Angka grafik kesimpulan slide utama untuk paket: "TBS terjual 235 vs 210 ton; ..." */
+function summaryLine(s) {
+  return (s.rows || []).filter(r => r.cur !== null && r.cur !== undefined)
+    .map(r => `${r.label} ${r.f ? r.f(r.cur) : r.cur}${r.ref !== null && r.ref !== undefined ? ` vs ${r.f ? r.f(r.ref) : r.ref}` : ''} ${r.unit || ''}`.trim()).join('; ') +
+    (s.caption ? `. Catatan: ${s.caption}` : '');
 }
 
 /** Ringkasan target owner untuk paket (kosong = "belum diisi"). */
@@ -439,8 +451,9 @@ function normalizeAiAnswer(out, plan) {
     const r = recoByCode(a.code);
     if (!r && a.code !== 'LAINNYA') { RUN_WARNINGS.push(`Rekomendasi dengan kode tidak dikenal (${a.code}) diabaikan.`); return null; }
     const title = r ? r.title : trimToSentence((a.custom_title || '').trim() || 'Tindak lanjut khusus', AI_LIMITS.ACTION_TITLE).replace(/\.$/, '');
-    const product = a.product ? productByName(a.product) : null;
-    if (a.product && !product) RUN_WARNINGS.push(`Produk "${a.product}" tidak ada di DECK_CONFIG.SAWITPRO_PRODUCTS; tidak ditampilkan.`);
+    const pf = productsFrom(a.product);
+    pf.unknown.forEach(n => RUN_WARNINGS.push(`Produk "${n}" tidak ada di DECK_CONFIG.SAWITPRO_PRODUCTS; tidak ditampilkan.`));
+    const product = pf.list.length ? pf.list : null;
     return { code: a.code, title, evidence: trimToSentence(a.evidence, 140), detail: trimToSentence(a.detail, AI_LIMITS.ACTION_DETAIL),
              impact: a.impact || '', timeline: a.timeline || '', priority: a.priority || 'sedang', basis_pages: Array.isArray(a.basis_pages) ? a.basis_pages : [],
              product };
@@ -451,10 +464,10 @@ function normalizeAiAnswer(out, plan) {
     summaries,
     storyline: Array.isArray(out.storyline) ? out.storyline : [],
     anomalies: (Array.isArray(out.anomalies) ? out.anomalies : []).filter(Boolean).slice(0, 4).map(a => {
-      const pr = a.product ? productByName(a.product) : null;
+      const pr = productsFrom(a.product).list;
       return { finding: trimToSentence(a.finding, 45).replace(/\.$/, ''), evidence: trimToSentence(a.evidence, 90),
         argument: trimToSentence(a.argument, 100),
-        follow_up: trimToSentence(a.follow_up, 90) + (pr ? ` Solusi SawitPRO: ${pr.name}.` : ''),
+        follow_up: trimToSentence(a.follow_up, 90) + (pr.length ? ` Solusi SawitPRO: ${pr.map(p => p.name).join(', ')}.` : ''),
         pages: Array.isArray(a.pages) ? a.pages : [] };
     }),
     agenda: normalizeAgenda(out),
@@ -476,7 +489,8 @@ function fallbackSummary(data) {
   const scope = data.dataPeriod ? ` periode ${data.dataPeriod}` : '';
   let s = `Laporan ini merangkum kinerja kebun ${data.title}${scope}.`;
   if (y) s += ` Yield rata-rata **${fmt(y.avg, 2)} ton/ha** per bulan, tertinggi ${fmt(y.max.value, 2)} ton/ha pada ${monthLong(y.max.p)} dan terendah ${fmt(y.min.value, 2)} ton/ha pada ${monthLong(y.min.p)}.`;
-  if (data.flow && data.flow.lossJjg) s += ` Sebanyak ${fmt(data.flow.lossPct, 0)}% janjang dipanen tidak sampai terjual.`;
+  const fc = data.flow && (data.flow.cur || data.flow);
+  if (fc && !fc.overSold && fc.lossJjg) s += ` Sebanyak ${fmt(fc.lossPct, 0)}% janjang dipanen${fc.p ? ` pada ${monthLong(fc.p)}` : ''} tidak sampai terjual${fc.lossRp ? `, setara ${fmtRp(fc.lossRp)}` : ''}.`;
   return trimToSentence(s, AI_LIMITS.SUMMARY_MAX_CHARS, true);
 }
 

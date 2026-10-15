@@ -147,8 +147,13 @@ const RECO_CATALOG = [
     action: 'Rekonsiliasi harian jumlah janjang di TPH, saat muat, di surat jalan, dan di tiket timbang; lakukan cek mendadak dan beri penanda/segel pada janjang di TPH.',
     signals: 'Janjang dipanen tidak sampai dimuat/terjual di atas ambang; selisih menumpuk tiap bulan.',
     topics: ['alurjjg', 'restan', 'mandormuat'],
-    when: d => { const F = d.flow; if (!F || !F.worst || !F.steps.some(x => x.loss)) return null;
-      return { evidence: `${fmt(F.lossJjg, 0)} jjg (${fmt(F.lossPct, 0)}%) tidak sampai terjual${F.lossRp ? ` ≈ ${fmtRp(F.lossRp)}` : ''}; terbesar di ${F.worst.from} → ${F.worst.to}`, priority: 'tinggi' }; } },
+    when: d => { const F = d.flow; if (!F) return null;
+      // bulan laporan dulu (dibanding bulan sebelumnya); kumulatif hanya bila bulan laporan tidak terukur
+      const c = F.cur && !F.cur.overSold ? F.cur : null, p = F.prev && !F.prev.overSold ? F.prev : null;
+      if (c && c.worst && c.steps.some(x => x.loss)) return { evidence: `${monthShort(c.p)}: ${fmt(c.lossJjg, 0)} jjg (${fmt(c.lossPct, 0)}%) tidak sampai terjual${c.lossRp ? ` ≈ ${fmtRp(c.lossRp)}` : ''}` +
+        (p && p.lossRp && c.lossRp ? ` vs ${monthShort(p.p)} ${fmtRp(p.lossRp)}` : '') + `; terbesar di ${c.worst.from} → ${c.worst.to}`, priority: 'tinggi' };
+      if (c || !F.worst || !F.steps.some(x => x.loss)) return null;
+      return { evidence: `kumulatif ${fmt(F.lossJjg, 0)} jjg (${fmt(F.lossPct, 0)}%) tidak sampai terjual${F.lossRp ? ` ≈ ${fmtRp(F.lossRp)}` : ''}; terbesar di ${F.worst.from} → ${F.worst.to}`, priority: 'tinggi' }; } },
 
   { code: 'R19', title: 'Samakan pencatatan panen dan muat',
     action: 'Pastikan setiap janjang dicatat saat panen di TPH; janjang dimuat yang melebihi panen menandakan pencatatan panen kurang atau restan yang tidak tercatat.',
@@ -173,6 +178,29 @@ const RECO_CATALOG = [
     topics: ['blokunsale', 'alurjjg'],
     when: d => { const U = d.unsale; return U && U.chronic.length
       ? { evidence: `${U.chronic.length} blok (${fmt(U.chronic.reduce((a, b) => a + b.ha, 0), 1)} ha) tanpa penjualan ≥ ${DECK_CONFIG.THRESHOLDS.UNSALE_MONTHS} bulan, mis. ${U.chronic.slice(0, 3).map(b => b.name).join(', ')}`, priority: 'tinggi' } : null; } },
+
+  { code: 'R22', title: 'Lakukan uji tanah per jenis tanah',
+    action: 'Ambil contoh tanah per blok atau kelompok blok sejenis, analisis pH, C-organik, N, P, K, Mg, dan KTK, lalu catat jenis tanah di data blok KebunPRO.',
+    signals: 'Jenis tanah blok belum tercatat; dosis pupuk belum disesuaikan dengan tanah; produktivitas di bawah standar Marihat.',
+    topics: ['tanah', 'pupuk', 'marihat'],
+    when: d => { const S = d.soil; if (!S || !S.unknownHa) return null;
+      return { evidence: `jenis tanah belum tercatat untuk ${S.unknownCount} blok (${fmt(S.unknownHa, 1)} ha, ${fmt(S.unknownPct, 0)}% luas)`,
+               priority: S.unknownPct >= 50 || (d.marihat && d.marihat.achTon < 0.7) ? 'tinggi' : 'sedang' }; } },
+
+  { code: 'R23', title: 'Lakukan uji daun untuk status hara',
+    action: 'Ambil contoh daun pelepah ke-17 per blok sejenis untuk melihat kekurangan hara yang sebenarnya sebelum menetapkan dosis pupuk.',
+    signals: 'BJR atau produktivitas jauh di bawah standar Marihat untuk umurnya; yield turun tanpa sebab pencatatan.',
+    topics: ['bjr', 'marihat', 'pupuk'],
+    when: d => { const M = d.marihat; if (!M) return null;
+      const low = (M.achBjr && M.achBjr < 0.8) || M.achTon < 0.7;
+      return low ? { evidence: `produktivitas ${fmtPct(M.achTon * 100, 0)}${M.achBjr ? `, BJR ${fmtPct(M.achBjr * 100, 0)}` : ''} dari standar Marihat ${M.cls}`, priority: M.achTon < 0.5 ? 'tinggi' : 'sedang' } : null; } },
+
+  { code: 'R24', title: 'Sesuaikan pupuk dengan tanah dan umur',
+    action: 'Susun program pemupukan per kelompok blok berdasarkan jenis tanah dan umur tanaman, lalu siapkan pengadaan pupuk sesuai kebutuhan setahun.',
+    signals: 'Jenis tanah sudah tercatat (sebagian/seluruhnya) dan kebutuhan pupuk indikatif sudah dihitung script.',
+    topics: ['pupuk', 'tanah'],
+    when: d => { const S = d.soil, F = d.fertilizer; if (!S || !F || S.knownPct <= 0) return null;
+      return { evidence: `${fmt(S.knownPct, 0)}% luas sudah tercatat jenis tanahnya${S.dominant ? ` (dominan ${S.dominant.name})` : ''}; kebutuhan pupuk indikatif ±${fmt(F.totalTon, 0)} ton/tahun`, priority: 'sedang' }; } },
 
   { code: 'R17', title: 'Pertahankan praktik yang sudah baik',
     action: 'Dokumentasikan praktik panen dan perawatan yang membuat kinerja naik agar tetap dijalankan.',

@@ -38,6 +38,9 @@ function describeBlocks(){ return 'Blok dipanen (3 blok)'; }
 function buildMonthlyTable(){ return 'bulan;yield\\nOkt 25;1.2'; }
 function monthLong(){ return 'Mei 2026'; }
 function checkDataCompleteness(){ return []; }
+function describeSoil(){ return 'JENIS TANAH BLOK: Belum tercatat 100%'; }
+function describeFertilizer(){ return 'KEBUTUHAN PUPUK INDIKATIF: -'; }
+function mkey(p){ return p.y + '-' + p.m; }
 const KPI_LIBRARY = {};
 function fmt(n, d){ if (n===null||n===undefined||isNaN(n)) return '-'; const p=Math.abs(n).toFixed(d===undefined?2:d).split('.'); p[0]=p[0].replace(/(?=(?:[0-9]{3})+$)(?!^)/g,'.'); return (n<0?'-':'')+p.join(','); }
 function fmtPct(n,d){ return fmt(n, d===undefined?1:d)+'%'; }
@@ -87,7 +90,7 @@ const ok = (c, m) => { console.log((c ? 'OK   ' : 'GAGAL'), m); if (!c) process.
 const data = run('loadSheetData(sheet)');
 const plan = run('planDeck(loadSheetData(sheet))');
 ctx.plan = plan; ctx.data = data;
-ok(plan.mains.length === 5 && plan.appendix.length === 23, `rencana: ${plan.mains.length} slide ringkasan, ${plan.appendix.length} lampiran`);
+ok(plan.mains.length === 5 && plan.appendix.length === 24 && plan.appendix[0].id === 'scorecard', `rencana: ${plan.mains.length} slide ringkasan, ${plan.appendix.length} lampiran`);
 ok(data.targets.tbs === 1200, 'target owner terbaca dari sheet (Target TBS = 1.200)');
 ok(plan.mains[0].page === 4 && plan.anomTopic.page === 9 && plan.conclTopic.page === 10 && plan.appendix[0].page === 14, `halaman: ringkasan ${plan.mains.map(m => m.page)}, temuan ${plan.anomTopic.page}, rekomendasi ${plan.conclTopic.page}, A1 hlm ${plan.appendix[0].page}`);
 const packet = run('buildClaudePacket(data, plan)');
@@ -123,30 +126,31 @@ ok(!/\n|\t/.test(cells.D1 + cells.D2 + cells.D3), 'blok jawaban satu baris tanpa
 
 let res = run('loadClaudeAnswer(sheet, data, plan)');
 const ai = res.ai;
-ok(ai && Object.keys(ai.byId).length === 23 && Object.keys(ai.summaries).length === 5, `jawaban terbaca: ${ai && Object.keys(ai.byId).length} lampiran, ${ai && Object.keys(ai.summaries).length} ringkasan`);
+ok(ai && Object.keys(ai.byId).length === 24 && Object.keys(ai.summaries).length === 5, `jawaban terbaca: ${ai && Object.keys(ai.byId).length} lampiran, ${ai && Object.keys(ai.summaries).length} ringkasan`);
 ok(ai.summaries.m_kinerja.insight.indexOf('Kebun Pak Budi') === 0, 'nama asli dikembalikan dari alias: ' + ai.summaries.m_kinerja.insight);
 ok(ai.conclusion.actions.length === 2 && ai.conclusion.actions[0].code === 'R18' && ai.conclusion.actions[0].impact === 'risiko berkurang', 'rekomendasi dinormalkan (kode & pilihan tetap)');
 ok(ai.byId.bjr.headline === 'Judul pendek bjr' && ai.byId.bjr.mismatch === false, 'judul slide & tren cocok');
 ok(GRID().v === '' && GRID().d === '' && GRID().v2 === '', 'sel D1/D2 disembunyikan dari pembaca data (masking)');
 function GRID() { return run('GRID_SEEN'); }
 ok(ai.agenda.items.length === 4 && ai.agenda.outcomes.length === 3 && ai.agenda.items[0].minutes === 15 && ai.agenda.items[3].pages[0] === 9, 'agenda & hasil yang dituju terbaca');
-ok(ai.conclusion.actions[0].product && ai.conclusion.actions[0].product.name === 'Dokter Sawit' && ai.conclusion.actions[1].product === null, 'produk: nama dikenali (tanpa beda huruf), produk fiktif ditolak');
+ok(ai.conclusion.actions[0].product && ai.conclusion.actions[0].product[0].name === 'Dokter Sawit' && ai.conclusion.actions[1].product === null, 'produk: nama dikenali (tanpa beda huruf), produk fiktif ditolak');
 ok(/Solusi SawitPRO: Dokter Sawit/.test(ai.anomalies[0].follow_up), 'produk di temuan ditambahkan ke tindak lanjut');
 ok(run('RUN_WARNINGS').length === 1 && /Produk Fiktif/.test(run('RUN_WARNINGS')[0]), 'satu-satunya peringatan: produk fiktif');
 // produk untuk rekomendasi cadangan
 const acts = run(`attachProducts([{ code: 'R04' }, { code: 'R20' }, { code: 'R07' }, { code: 'R01' }])`);
-ok(acts[0].product.name === 'Dokter Sawit' && acts[1].product === null && acts[2].product === null && acts[3].product === null, 'cadangan: hanya Dokter Sawit untuk kode agronomi; KebunPRO tidak pernah disarankan');
+ok(acts[0].product.map(x => x.name).join() === 'Uji Tanah Dokter Sawit,Uji Daun Dokter Sawit' && acts[1].product === null && acts[2].product === null && acts[3].product === null && !JSON.stringify(acts).includes('KebunPRO'), 'cadangan: R04 -> uji tanah + uji daun; KebunPRO tidak pernah disarankan');
 // KPI berpembanding
 const kd = run(`({ produksiActual: true, targets: { tbs: 250 }, produksi: [{p:{y:2026,m:7},value:210},{p:{y:2026,m:8},value:234.8}],
   yield: [{p:{y:2026,m:7},value:1.1},{p:{y:2026,m:8},value:1.3}], bjr: [{p:{y:2026,m:7},value:7.0},{p:{y:2026,m:8},value:6.4}], bjrSoldCum: 6.4, marihat: { cls:'S3', pot:{ rbt:14.1, ton:28 }, achTon:0.29, realTonHa:8.1 },
-  revenueTotal: [{p:{y:2026,m:7},value:2.1e8},{p:{y:2026,m:8},value:2.75e8}], flow: { overSold:false, lossJjg: 9256, lossPct: 51.4, lossRp: 6.569e8 } })`);
+  revenueTotal: [{p:{y:2026,m:7},value:2.1e8},{p:{y:2026,m:8},value:2.75e8}], flow: { overSold:false, lossJjg: 9256, lossPct: 51.4, lossRp: 6.569e8,
+    cur: { p:{y:2026,m:8}, overSold:false, lossJjg: 1500, lossPct: 20, lossRp: 6.0e7 }, prev: { p:{y:2026,m:7}, overSold:false, lossJjg: 900, lossPct: 12, lossRp: 4.0e7 } } })`);
 ctx.kd = kd; const kp = run('computeOwnerKpis(kd)');
 console.log(kp.map(k => `   ${k.name}: ${k.value} ${k.unit} | ${k.note} [${k.tone}]`).join('\n'));
 ok(kp[0].note === 'Target 250 ton · tercapai 94%' && kp[0].tone === 'neutral', 'TBS vs target owner');
 ok(/vs rata-rata 2 bulan/.test(kp[1].note) && kp[1].tone === 'good', 'yield vs rata-rata periode');
 ok(kp[2].name === 'BJR Sep 26' && /▼ 4% vs rata-rata 2 bulan \(6,7 kg\)/.test(kp[2].note) && kp[2].tone === 'bad', 'BJR bulan laporan vs rata-rata periode (tanpa target)');
 ok(/▲ 31% vs Agu 26/.test(kp[3].note), 'pendapatan vs bulan lalu');
-ok(/batas wajar ≤ 5%/.test(kp[5].note) && kp[5].tone === 'bad', 'kebocoran vs batas wajar');
+ok(kp[5].name === 'Kerugian janjang Sep 26' && kp[5].value === '60,0' && /20% hilang · ▲ 50% vs Agu 26/.test(kp[5].note) && kp[5].tone === 'bad', 'kebocoran BULAN LAPORAN (bukan kumulatif) vs bulan lalu');
 run('kd.targets = { tbs: null, yield: null, bjr: null, revenue: null }');
 const kn = run('computeOwnerKpis(kd)');
 console.log(kn.slice(0, 4).map(k => `   ${k.name}: ${k.value} ${k.unit} | ${k.note} [${k.tone}]`).join('\n'));
@@ -210,4 +214,77 @@ ok(res.ai === null && CAPTURED && /belum berisi/.test(CAPTURED[1]), 'D1 kosong d
 // 8. Isi D4 non-JSON tidak ikut terbaca
 cells.D1 = 'Catatan biasa'; res = run('readAnswerBlocks(sheet)');
 ok(res.blocks.length === 0, 'sel D berisi teks biasa tidak dianggap jawaban');
+// 9. Grafik kesimpulan slide utama (bulan laporan vs pembanding), dengan data tiruan
+const sumK = run(`MAIN_SUMMARY.m_kinerja({ produksiActual: true, produksi: [{p:{y:2026,m:7},value:210},{p:{y:2026,m:8},value:234.8}],
+  revenueTotal: [{p:{y:2026,m:7},value:2.1e8},{p:{y:2026,m:8},value:2.75e8}], costTotal: [{p:{y:2026,m:7},value:3.0e7},{p:{y:2026,m:8},value:3.6e7}],
+  profit: [{p:{y:2026,m:7},value:1.8e8},{p:{y:2026,m:8},value:2.39e8}] })`);
+ok(sumK && sumK.rows.length === 4 && sumK.rows[2].goodUp === false && /Sep 26/.test(sumK.curLabel) && /Agu 26/.test(sumK.refLabel), 'grafik kesimpulan Kinerja: 4 indikator, Sep 26 vs Agu 26, biaya = makin kecil makin baik');
+ctx.sumK = sumK; run('RUN_WARNINGS = []');
+const cmp = run(`(function(){ const b = new SlideBatch('pg','sum'); drawCompareRows(b, sumK); return { req: JSON.stringify(b.req), texts: b.texts }; })()`);
+const A = run('DECK_CONFIG.LAYOUT.CONTENT');
+ok(/▲ 20%/.test(cmp.req) && /Sep 26 \(bulan laporan\)/.test(cmp.req) && cmp.texts.every(t => t.y >= A.top - 1 && t.y + t.h <= A.top + A.height + 1 && t.x + t.w <= A.left + A.width + 1),
+  'grafik kesimpulan tergambar di area konten (legenda, selisih %, tidak keluar batas)');
+
+// 10. Uji integrasi: file 1–9 ASLI (tanpa tiruan) dengan sheet tiruan berformat terbaru (blok + jenis tanah)
+const ctx2 = Object.assign({}, ctx); delete ctx2.sheet; vm.createContext(ctx2);
+for (const f of ['1_ConfigAndStyle.gs', '3_TextAndDataMapper.gs', '4_ClaudeBridge.gs', '5_MainController.gs', '6_ShapeCharts.gs',
+                 '7_RecommendationCatalog.gs', '8_StandarMarihat.gs', '9_TanahPupuk.gs']) vm.runInContext(fs.readFileSync(OUT + f, 'utf8'), ctx2, { filename: f });
+const W = 20, blank = () => Array(W).fill('');
+const G = []; for (let i = 0; i < 60; i++) G.push(blank());
+const put = (r, c, v) => { G[r][c] = v; };
+put(0, 0, 'Title'); put(0, 1, 'Kebun Uji'); put(1, 0, 'Period'); put(1, 1, 'Mar 2026 - Sep 2026'); put(2, 0, 'Lokasi'); put(2, 1, 'Dumai');
+['year_month', 'ton/ha', 'jjg/ha', 'luas panen', 'hargajual/kg', 'total_janjang', 'total_sale_jjg', 'janjang_terjual_tanpa_berat', 'total_tonasehasil', 'avg_bjr_kg',
+ 'block sale (name, luas, tahun tanam, soil type)', 'block unsale (name, luas, tahun tanam, soil type)'].forEach((h, c) => put(3, c, h));
+['Month', 'jjg Dipanen', 'jjg Dimuat', 'jjg Masuk trip', 'jjg Terjual', 'jjg Terjual tanpa berat'].forEach((h, i) => put(3, 14 + i, h));
+const sale = 'A1, 20 ha, 2007, Gambut; A2, 15 ha, 1998, Podsolik Merah Kuning; B1, 10 ha, 2015, -; Robert C, 8 ha, 2010, -';
+const unsale = 'B2, 12 ha, 2016, Gambut; C1, 5 ha, 0, -';
+const M = [ // bulan, panen, terjual berberat, tanpa berat, ton, harga
+  [2, 6000, 5600, 100, 110, 2900], [3, 6200, 5900, 50, 118, 2950], [4, 5800, 5500, 0, 112, 2800], [5, 6500, 6000, 200, 121, 2750],
+  [6, 6400, 6100, 100, 125, 2960], [7, 6100, 5300, 300, 108, 2890], [8, 6600, 4800, 400, 96, 2910]];
+M.forEach(([m, pn, sold, nw, ton, h], i) => {
+  const r = 4 + i, date = `1/${m + 1}/2026`, lp = 53;
+  [date, ton / lp, sold / lp, lp, h, pn, sold, nw, ton, (ton * 1000) / sold, sale, i % 2 ? unsale : ''].forEach((v, c) => put(r, c, v));
+  [date, pn, pn - 100, pn - 100, sold, nw].forEach((v, k) => put(r, 14 + k, v));
+});
+put(24, 0, 'Analisis Pengeluaran');
+['year_month', 'total_harvested_area_ha', 'total_supply_ton', 'upkeep_cost_idr', 'harvest_cost_idr', 'load_cost_idr', 'total_cost_idr', 'revenue_idr', 'total_cost_per_kg', 'revenue_per_kg', 'total_cost_per_ha', 'revenue_per_ha']
+  .forEach((h, c) => put(25, 5 + c, h));
+M.forEach(([m, pn, sold, nw, ton, h], i) => {
+  const cost = 2.0e7 + i * 1e6, rev = ton * 1000 * h;
+  [`1/${m + 1}/2026`, 53, ton, 0, cost, 0, cost, rev, cost / (ton * 1000), h, cost / 53, rev / 53].forEach((v, c) => put(26 + i, 5 + c, v));
+});
+put(44, 5, 'Top Mandor Panen'); ['Nama', '2 Bulan Lalu', 'Bulan Lalu', 'Bulan Ini'].forEach((h, c) => put(45, 5 + c, h));
+put(46, 5, 'Robert C'); put(46, 6, '600 jjg/hari; 22 hari'); put(46, 7, '650 jjg/hari; 21 hari'); put(46, 8, '300 jjg/hari; 5 hari');
+put(47, 5, 'Budi'); put(47, 6, '420 jjg/hari; 20 hari'); put(47, 7, '380 jjg/hari; 22 hari'); put(47, 8, '-');
+const disp = G.map(r => r.map(v => (typeof v === 'number' ? String(v) : v)));
+ctx2.sheet2 = { getName: () => 'Kebun Uji', getDataRange: () => ({ getValues: () => G.map(r => r.slice()), getDisplayValues: () => disp.map(r => r.slice()) }), getRange: () => ({ getValue: () => '' }) };
+const run2 = code => vm.runInContext(code, ctx2);
+run2('RUN_WARNINGS = []; var D2 = loadSheetData(sheet2); var P2 = planDeck(D2);');
+const D2 = run2('D2'), P2 = run2('P2');
+ok(D2.blocks && D2.blocks.blocks.length === 6 && D2.blocks.blocks.find(b => b.name === 'A1').soil === 'Gambut', `blok format terbaru terbaca: ${D2.blocks && D2.blocks.blocks.length} blok unik, jenis tanah per blok`);
+ok(D2.soil && D2.soil.groups.map(g => g.name).join() === 'Gambut,Podsolik Merah Kuning,Belum tercatat' && Math.round(D2.soil.unknownHa) === 23,
+  `jenis tanah: ${D2.soil && D2.soil.groups.map(g => `${g.name} ${g.ha} ha`).join(', ')}`);
+ok(D2.fertilizer && D2.fertilizer.totalTon > 0 && D2.fertilizer.haNoAge === 5, `kebutuhan pupuk indikatif ${D2.fertilizer && D2.fertilizer.totalTon.toFixed(1)} ton/tahun (blok tanpa tahun tanam tidak dihitung)`);
+const c2 = D2.flow.cur, p2 = D2.flow.prev;
+ok(c2 && c2.p.m === 8 && c2.lossJjg === 6600 - 5200 && p2.p.m === 7 && p2.lossJjg === 6100 - 5600 && c2.lossRp < D2.flow.lossRp,
+  `kebocoran per bulan: Sep 26 ${c2 && c2.lossJjg} jjg vs Agu 26 ${p2 && p2.lossJjg} jjg (bukan kumulatif ${D2.flow.lossJjg} jjg)`);
+const k2 = run2('computeOwnerKpis(D2)').find(k => /janjang/i.test(k.name));
+ok(k2 && /Sep 26/.test(k2.name) && /vs Agu 26/.test(k2.note), `KPI kebocoran: ${k2 && `${k2.name} ${k2.value} ${k2.unit} | ${k2.note}`}`);
+ok(P2.mains.every(m => m.summary && m.summary.rows.some(r => r.cur !== null)), `semua slide utama punya grafik kesimpulan: ${P2.mains.map(m => m.id + '=' + (m.summary ? m.summary.rows.length : 0)).join(', ')}`);
+ok(P2.appendix.some(t => t.id === 'tanah') && P2.appendix.some(t => t.id === 'pupuk') && P2.appendix.find(t => t.id === 'tanah').mainOf.id === 'm_penyebab', 'lampiran Jenis Tanah & Kebutuhan Pupuk masuk tema Penyebab');
+const pk2 = run2('buildClaudePacket(D2, P2)');
+ok(/KEBOCORAN BULAN LAPORAN/.test(pk2.text) && /JENIS TANAH BLOK/.test(pk2.text) && /KEBUTUHAN PUPUK INDIKATIF/.test(pk2.text) && /grafik kesimpulan/.test(pk2.text) && /Uji Tanah Dokter Sawit/.test(pk2.text) && !/Robert C/.test(pk2.text),
+  'paket: kebocoran bulan laporan, jenis tanah, kebutuhan pupuk, grafik kesimpulan, produk uji tanah; nama tetap disamarkan');
+const rc2 = run2('detectRecommendations(D2, P2.topics, detectAnomalies(P2.topics, D2))').map(r => r.code);
+ok(rc2.indexOf('R22') >= 0 && rc2.indexOf('R24') >= 0, `rekomendasi terindikasi: ${rc2.join(', ')} (R22 uji tanah, R24 pupuk sesuai tanah)`);
+const ap2 = run2(`attachProducts([{ code: 'R22' }, { code: 'R24' }, { code: 'R04' }])`);
+ok(ap2[0].product[0].name === 'Uji Tanah Dokter Sawit' && ap2[1].product.map(x => x.name).join() === 'Dokter Sawit,Pupuk SawitPRO' && ap2[2].product === null, 'produk cadangan: uji tanah, pupuk; maks. 2 kartu berproduk');
+run2('RUN_WARNINGS = []');
+const lay2 = run2(`(function(){ const out = []; P2.mains.forEach(m => { const b = new SlideBatch('pg', m.id); drawCompareRows(b, m.summary); out.push(b.texts); }); return out; })()`);
+const A2 = run2('DECK_CONFIG.LAYOUT.CONTENT');
+ok(lay2.every(ts => ts.every(t => t.y >= A2.top - 1 && t.y + t.h <= A2.top + A2.height + 1)), 'grafik kesimpulan kelima slide utama muat di area konten');
+const tbl2 = run2(`(function(){ const t = P2.appendix.find(x => x.id === 'pupuk'); const b = new SlideBatch('pg','pupuk'); t.draw(b); const t2 = P2.appendix.find(x => x.id === 'alurjjg'); const b2 = new SlideBatch('pg','alur'); t2.draw(b2); return JSON.stringify(b.req) + JSON.stringify(b2.req); })()`);
+ok(/Urea \(N\)/.test(tbl2) && /"text":"6.600"/.test(tbl2), 'lampiran pupuk tergambar; corong alur janjang memakai bulan laporan (6.600 dipanen)');
+ok(run2('dataHeadline("m_kebocoran", D2)') && /Sep|September/.test(run2('dataHeadline("m_kebocoran", D2)')), `judul otomatis kebocoran: "${run2('dataHeadline("m_kebocoran", D2)')}"`);
+
 console.log(process.exitCode ? '\nADA YANG GAGAL' : '\nSEMUA UJI LOLOS');

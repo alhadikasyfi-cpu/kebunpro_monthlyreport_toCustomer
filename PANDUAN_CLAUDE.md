@@ -42,7 +42,7 @@ Blok SLIDE (sel berikutnya):
 
 (Nilai "..." di atas hanya contoh bentuk. Isi dari data kebun ini.)
 
-Pilihan tetap (trend, status, impact, timeline, priority, code) tercantum di paket. Isi PERSIS salah satu pilihan, huruf kecil kecuali kode seperti R18. Kunci "custom_title" diisi string kosong "" kecuali kode LAINNYA. Kunci "product" diisi nama produk persis dari daftar PRODUK SAWITPRO di paket, atau "" bila tidak relevan.
+Pilihan tetap (trend, status, impact, timeline, priority, code) tercantum di paket. Isi PERSIS salah satu pilihan, huruf kecil kecuali kode seperti R18. Kunci "custom_title" diisi string kosong "" kecuali kode LAINNYA. Kunci "product" diisi nama produk persis dari daftar PRODUK SAWITPRO di paket (satu nama, atau daftar paling banyak 2 nama, mis. ["Uji Tanah Dokter Sawit","Pupuk SawitPRO"]), atau "" bila tidak relevan.
 
 # 4. Cara menulis tiap field
 
@@ -65,7 +65,8 @@ Blok UTAMA:
 - storyline: 3–4 benang merah sebab → akibat yang mengalir mengikuti alur deck, masing-masing dengan angka dan nomor slide buktinya.
 - summaries: SATU objek per SLIDE RINGKASAN UNTUK OWNER (id tercantum di paket). Owner hanya punya beberapa detik per slide.
   - headline: JUDUL slide sesuai ATURAN JUDUL, menjawab "pertanyaan owner" slide itu. Untuk slide penyebab, judul WAJIB menyebut penyebabnya (faktor mana yang paling jauh dari standar), bukan nama topik.
-  - insight: 2 kalimat dengan batas karakter di paket, tebalkan 1 angka kunci dengan **...**: apa yang terjadi dan apa artinya bagi uang/keputusan owner. Konsisten dengan main_message slide lampiran yang dirangkum.
+  - Slide ringkasan menampilkan GRAFIK KESIMPULAN (bukan grafik lampiran): 3–4 indikator bulan laporan berdampingan dengan pembandingnya, angkanya tercantum di paket ("visual yang tampil: grafik kesimpulan ..."). Judul dan insight WAJIB memakai angka dari grafik itu agar owner langsung menangkap pesannya dalam 30 detik.
+  - insight: 2 kalimat dengan batas karakter di paket, tebalkan 1 angka kunci dengan **...**: apa yang terjadi dan apa artinya bagi uang/keputusan owner. Konsisten dengan grafik kesimpulan dan main_message slide lampiran yang dirangkum.
   - speaker_notes: 80–120 kata: ringkasan sebab-akibat, lalu sebut lampiran yang bisa dibuka ("detail di slide N").
 - executive_summary: paragraf pembuka slide Ringkasan Eksekutif (di atas KARTU KPI), 2–3 kalimat (batas karakter di paket): temuan utama DAN penyebabnya, dengan angka yang disandingkan pembandingnya. Tebalkan SATU angka kunci dengan **...**. Jangan mengulang semua angka kartu KPI.
 - intro_notes: 90–150 kata: alur pembahasan deck dan benang merahnya, agar owner tahu apa yang akan dilihat.
@@ -101,7 +102,7 @@ Blok UTAMA:
 
 - SUDUT PANDANG PENYEDIA LAYANAN: sampaikan temuan sebagai risiko dan peluang perbaikan bagi owner, tanpa menyalahkan atau menuduh karyawan kebun. Tindakan internal kebun ditulis sebagai saran kepada owner.
 - RAGAM FORMAL: seluruh teks memakai bahasa Indonesia baku dan sopan, seperti laporan resmi kepada pemilik usaha. Kalimat lengkap dan aktif. Tanpa kata percakapan atau gaul (mis. "nih", "banget", "gak", "udah"), tanpa singkatan tidak baku ("yg", "dgn", "bln", "tdk"); satuan baku boleh (ton, ha, kg, Rp). Bila menyapa, gunakan "Bapak/Ibu".
-- TARGET BERDAMPINGAN DENGAN REALISASI: setiap angka kinerja di judul, insight, ringkasan, dan rekomendasi WAJIB disandingkan dengan pembandingnya, karena angka tanpa pembanding tidak dapat dinilai. Pembanding utama: TARGET OWNER di paket bila diisi; bila "belum diisi", pakai BULAN SEBELUMNYA atau RATA-RATA PERIODE (sama seperti kartu KPI di paket). Standar Marihat hanya konteks tambahan di slide BJR dan Pencapaian vs Standar Marihat; batas wajar (mis. kebocoran ≤ 5%) hanya untuk kebocoran dan janjang tanpa berat. Contoh: "TBS 234 ton, naik 12% dari Agustus 2026"; "BJR 6,4 kg, turun 8% dari rata-rata 12 bulan". Yield bulanan (ton/ha per bulan, berbasis luas panen) JANGAN dibandingkan langsung dengan standar Marihat tahunan; gunakan baris pencapaian Marihat yang sudah dihitung script.
+- TARGET BERDAMPINGAN DENGAN REALISASI: setiap angka kinerja di judul, insight, ringkasan, dan rekomendasi WAJIB disandingkan dengan pembandingnya, karena angka tanpa pembanding tidak dapat dinilai. Pembanding utama: TARGET OWNER di paket bila diisi; bila "belum diisi", pakai BULAN SEBELUMNYA atau RATA-RATA PERIODE (sama seperti kartu KPI di paket). KEBOCORAN JANJANG dan estimasi kerugiannya SELALU untuk BULAN LAPORAN dibandingkan BULAN SEBELUMNYA (baris "KEBOCORAN BULAN LAPORAN" di paket); angka kumulatif seluruh periode hanya konteks, jangan dipakai di judul, KPI, atau ringkasan. Standar Marihat menjadi pembanding di slide Penyebab Naik-Turun Hasil, BJR, dan Pencapaian vs Standar Marihat; batas wajar (mis. kebocoran ≤ 5%) hanya untuk kebocoran dan janjang tanpa berat. Contoh: "TBS 234 ton, naik 12% dari Agustus 2026"; "BJR 6,4 kg, turun 8% dari rata-rata 12 bulan". Yield bulanan (ton/ha per bulan, berbasis luas panen) JANGAN dibandingkan langsung dengan standar Marihat tahunan; gunakan baris pencapaian Marihat yang sudah dihitung script.
 
 - Angka dulu, lalu konteks: "1.842 ton — 105% dari target", "BJR 18,4 kg, 54% dari standar Marihat".
 - Kalimat biasa (bukan HURUF BESAR), tanpa emoji dan tanpa tanda seru. Nama produk ditulis SawitPRO, KebunPRO.
@@ -115,9 +116,13 @@ Blok UTAMA:
 
 # 6b. Produk SawitPRO (field product)
 
-- Saat ini produk yang BOLEH disarankan hanya yang tercantum di daftar PRODUK SAWITPRO di paket (Dokter Sawit). Sarankan HANYA bila produk itu langsung membantu menyelesaikan masalah agronomi pada rekomendasi atau temuan tersebut: BJR atau produktivitas jauh di bawah standar, pemupukan, hama, penyakit, atau mutu panen. Produk yang tidak ada di daftar tidak boleh disebut.
+- Produk yang BOLEH disarankan hanya yang tercantum di daftar PRODUK SAWITPRO di paket. Sarankan HANYA bila produk itu langsung membantu menyelesaikan masalah agronomi pada rekomendasi atau temuan tersebut. Produk yang tidak ada di daftar tidak boleh disebut. Pegangan memilih:
+  - Dokter Sawit (konsultasi agronomis): hama, penyakit, mutu panen, perawatan, BJR atau produktivitas di bawah standar.
+  - Uji Tanah Dokter Sawit: jenis tanah blok belum tercatat (lihat JENIS TANAH di paket), atau dosis pupuk belum pernah didasarkan pada analisis tanah. Ini langkah pertama sebelum menyarankan pupuk.
+  - Uji Daun Dokter Sawit: BJR atau produktivitas jauh di bawah standar Marihat untuk umurnya, untuk memastikan hara mana yang kurang.
+  - Pupuk SawitPRO: jenis tanah sudah tercatat dan KEBUTUHAN PUPUK INDIKATIF sudah dihitung script; sebut volumenya sebagai indikatif (ton/tahun dari paket) yang dikonfirmasi uji tanah/daun.
 - KebunPRO BUKAN produk yang disarankan: deck ini sendiri adalah layanan KebunPRO yang sudah dipakai owner. Untuk masalah pencatatan (janjang tanpa berat, catatan panen/muat/blok tidak lengkap, biaya belum dicatat), sarankan optimalisasi pemakaian fitur pencatatan KebunPRO yang sudah dimiliki, dengan pendampingan Tim SawitPRO, di detail rekomendasi, dan isi product "".
-- Batasi: paling banyak 2 rekomendasi dan 1 temuan yang memuat produk. Laporan ini laporan kinerja, bukan materi promosi.
+- Batasi: paling banyak 2 rekomendasi dan 1 temuan yang memuat produk, dan paling banyak 2 produk per rekomendasi. Laporan ini laporan kinerja, bukan materi promosi.
 - Jangan menjanjikan angka hasil dari produk (mis. "yield naik 20%"). Nama produk cukup di field product; script menampilkannya sebagai "Solusi SawitPRO: <nama> (<keterangan>)". Jangan mengulang nama produk di detail.
 
 # 7. Pengetahuan agronomi sawit (pegangan umum, bukan data kebun ini)
@@ -134,6 +139,8 @@ Blok UTAMA:
 - ASAL TONASE (lihat baris ASAL TONASE di paket): bila TERJUAL, tonase di sheet berasal dari janjang terjual; bila BJR berbasis janjang terjual jauh lebih tinggi dari BJR berbasis janjang dipanen, BJR rendah kemungkinan disebabkan janjang yang tidak sampai terjual, jadi kaitkan slide BJR dengan slide alur janjang. Bila DIPANEN, BJR adalah berat janjang yang dipanen; janjang yang tidak sampai terjual mengurangi PENJUALAN (bukan BJR).
 - STANDAR MARIHAT (PPKS; Permentan 131/2013 Tabel 3) adalah acuan resmi potensi produktivitas, jumlah tandan, dan BJR per umur tanaman dan kelas lahan. Gunakan angka pencapaian (%) dan selisih ton/Rp yang sudah dihitung script; sebutkan kelas lahan yang dipakai dan bila itu asumsi. Potensi berlaku untuk bibit unggul D×P; bibit tidak unggul hanya sekitar 50% potensi (sebut sebagai kemungkinan, bukan kepastian).
 - BJR jauh di bawah acuan untuk umurnya adalah temuan penting (mutu panen, brondolan, atau pencatatan).
+- JENIS TANAH menentukan kendala hara dan dosis pupuk: gambut (pH rendah, kurang Cu/Zn/B, butuh K lebih, jaga muka air), Podsolik Merah Kuning/Ultisol (masam, P terikat, Mg rendah), Latosol/Oksisol (KTK rendah, P terikat), aluvial (relatif subur, jaga drainase), berpasir (hara mudah tercuci, pupuk dibagi 3–4 kali), sulfat masam (pengapuran dan tata air), Andosol (P terikat). Gunakan baris JENIS TANAH di paket; bila jenis tanah "Belum tercatat", jangan menebak, sarankan uji tanah dan pencatatan jenis tanah di data blok KebunPRO.
+- KEBUTUHAN PUPUK INDIKATIF di paket = acuan umum dosis per umur × penyesuaian jenis tanah × jumlah pokok. Selalu sebut "indikatif" dan "dikonfirmasi uji tanah dan uji daun"; jangan menulisnya sebagai rekomendasi dosis final.
 - Tidak ada data cuaca di laporan ini: jangan menjadikan cuaca/musim sebagai penjelasan utama; bila disebut, tandai sebagai dugaan.
 
 # 8. Istilah dan koherensi
@@ -165,7 +172,8 @@ insight: <Faktor> tercatat <angka> pada <bulan>, <di atas/di bawah> rata-rata <a
 - trend, status, impact, timeline, priority, code persis salah satu pilihan tetap; trend sama dengan SINYAL.
 - Judul ≤ 45 karakter, berupa jawaban, angkanya ada di paket dan disandingkan pembanding bila muat.
 - agenda berisi 4–6 item dan tepat 3 outcomes berupa keputusan; bahasa formal di seluruh teks.
-- product hanya nama dari daftar di paket, atau "".
+- product hanya nama dari daftar di paket (satu nama atau daftar maks. 2 nama), atau "".
+- Kebocoran janjang di judul, insight ringkasan, dan executive_summary memakai bulan laporan vs bulan sebelumnya, bukan kumulatif.
 - Tidak ada tanda kutip ganda di dalam teks; tidak ada baris baru atau tab; satu baris penuh; kurung kurawal dan kurung siku seimbang.
 - Semua angka ditulis format Indonesia dan berasal dari paket.
 
