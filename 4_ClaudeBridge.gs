@@ -239,6 +239,9 @@ ${describeRelations(data)}
 DATA BLOK
 ${describeBlocks(data)}
 
+PRODUKSI PER BLOK (janjang dipanen per blok vs standar Marihat umurnya)
+${describeBlockProduction(data)}
+
 STATUS PEMUPUKAN, JENIS TANAH & BUKTI PENDUKUNG (dasar rekomendasi uji daun dan uji tanah Dokter Sawit)
 ${describeFertStatus(data)}
 ${describeSoil(data)}

@@ -19,7 +19,9 @@ const RECO_CATALOG = [
     action: 'Jaga rotasi panen 7–10 hari per ancak agar janjang matang tidak tertinggal di pokok.',
     signals: 'JJG/ha turun atau fluktuatif; produksi naik-turun tajam antar-bulan.',
     topics: ['jjg', 'produksi'],
-    when: d => { const g = signals(d.jjgHa); return ['turun', 'fluktuatif'].indexOf(g.trend) >= 0
+    when: d => { const P = d.blockProd;
+      if (P && P.rotasiRows.length >= 3) return { evidence: `${P.rotasiRows.length} blok berproduktivitas rendah karena jarang dipanen, mis. ${P.rotasiRows.slice(0, 3).map(r => `${r.name} ${r.harvestMonths}/${P.nMonths} bln`).join(', ')}`, priority: 'tinggi' };
+      const g = signals(d.jjgHa); return ['turun', 'fluktuatif'].indexOf(g.trend) >= 0
       ? { evidence: `JJG/ha ${g.trend} (CV ${fmt(g.cv, 0)}%, bulan terakhir ${g.position})`, priority: 'tinggi' } : null; } },
 
   { code: 'R02', title: 'Tegakkan kriteria matang panen',
@@ -192,7 +194,8 @@ const RECO_CATALOG = [
     signals: 'STATUS PEMUPUKAN di paket = indikasi kurang pupuk atau indikasi kelebihan pupuk (hasil jauh di bawah standar Marihat, BJR rendah, dosis aktual menyimpang, atau pemupukan tidak tercatat).',
     topics: ['pupuk', 'marihat', 'bjr'],
     when: d => { const F = d.fertStatus; if (!F) return null;
-      if (F.verdict === 'kurang' || F.verdict === 'berlebih') return { evidence: `${F.label.toLowerCase()}: ${F.reason}`, priority: 'tinggi' };
+      const blk = F.priorityBlocks && F.priorityBlocks.length ? `; mulai dari blok ${F.priorityBlocks.slice(0, 3).join(', ')}` : '';
+      if (F.verdict === 'kurang' || F.verdict === 'berlebih') return { evidence: `${F.label.toLowerCase()}: ${F.reason}${blk}`, priority: 'tinggi' };
       if (F.verdict === 'belum') return { evidence: 'status pupuk belum dapat dinilai dari data kebun', priority: 'sedang' };
       return null; } },
 

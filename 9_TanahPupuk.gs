@@ -406,6 +406,12 @@ function buildFertilizerStatus(d) {
     ev.push({ indikator: 'Pemupukan tercatat', kebun: ada ? [fertUpkeep.length ? fmtRpShort(fertUpkeep.reduce((a, x) => a + x.value, 0)) : '', fertDays ? `${fertDays} catatan mandor` : ''].filter(Boolean).join(', ') : 'tidak tercatat',
       acuan: '2–3 kali/tahun', arti: ada ? 'ada catatan pemupukan' : 'belum terlihat di catatan KebunPRO', arah: ada ? 'netral' : 'kurang' });
   }
+  // 3b. Produksi per blok (file 10): blok yang RUTIN dipanen tetapi janjang/pokok jauh di bawah standar umurnya
+  const P = d.blockProd, T = DECK_CONFIG.THRESHOLDS;
+  const blockLow = !!(P && P.fertPct / 100 >= T.BLOCK_LOW_AREA);
+  if (P && P.ratedHa) ev.push({ indikator: 'Blok janjang rendah', kebun: `${P.fertRows.length} blok (${fmt(P.fertPct, 0)}% luas)`,
+    acuan: `≥ ${pct(T.BLOCK_LOW_ACH)} standar`, arti: P.fertRows.length ? `rutin dipanen tetapi janjang/pokok rendah, mis. ${P.fertRows.slice(0, 3).map(r => r.name).join(', ')}` : 'tidak ada blok rutin dipanen yang jauh di bawah standar',
+    arah: blockLow ? 'kurang' : 'netral' });
   // 4. Jenis tanah (menentukan kebutuhan khusus; tanpa data tanah dosis belum bisa disesuaikan)
   if (S) {
     const gb = S.groups.find(g => g.key === 'gambut');
@@ -414,16 +420,19 @@ function buildFertilizerStatus(d) {
   }
   const yieldLow = M && (M.achTon < 0.8 || (M.achBjr && M.achBjr < 0.85));
   const verdict = doseVerdict && doseVerdict !== 'sesuai' ? doseVerdict
-    : yieldLow ? 'kurang'
+    : yieldLow || blockLow ? 'kurang'
     : doseVerdict === 'sesuai' || (M && M.achTon >= 0.8) ? 'sesuai' : 'belum';
   const reason = verdict === 'kurang'
     ? (doseVerdict === 'kurang' ? `dosis NPK ${fmt(N.actual, 1)} kg/pohon/tahun di bawah prediksi untuk ${fmt(N.kurangHa, 0)} ha`
-      : M.achTon < 0.8 ? `hasil ${pct(M.achTon)} dari standar Marihat${M.achBjr && M.achBjr < 0.85 ? ` dan BJR ${pct(M.achBjr)} dari standar` : ''}`
-      : `BJR ${pct(M.achBjr)} dari standar Marihat untuk umurnya`)
+      : M && M.achTon < 0.8 ? `hasil ${pct(M.achTon)} dari standar Marihat${M.achBjr && M.achBjr < 0.85 ? ` dan BJR ${pct(M.achBjr)} dari standar` : ''}`
+      : M && M.achBjr && M.achBjr < 0.85 ? `BJR ${pct(M.achBjr)} dari standar Marihat untuk umurnya`
+      : `${P.fertRows.length} blok (${fmt(P.fertPct, 0)}% luas) rutin dipanen tetapi janjangnya di bawah ${pct(T.BLOCK_LOW_ACH)} standar`)
     : verdict === 'berlebih' ? `dosis NPK ${fmt(N.actual, 1)} kg/pohon/tahun di atas prediksi untuk ${fmt(N.lebihHa, 0)} ha`
     : verdict === 'sesuai' ? (M ? `hasil ${pct(M.achTon)} dari standar Marihat` : 'dosis sesuai prediksi')
     : 'data hasil per umur tanaman dan dosis pupuk belum cukup';
-  return { verdict, label: STATUS_PUPUK_LABEL[verdict], reason, evidence: ev.slice(0, 6), doseVerdict };
+  // Blok prioritas uji daun & tanah: blok rutin dipanen dengan selisih janjang terbesar dari standar
+  const priorityBlocks = P ? P.fertRows.slice(0, 5).map(r => r.name) : [];
+  return { verdict, label: STATUS_PUPUK_LABEL[verdict], reason, evidence: ev.slice(0, 6), doseVerdict, priorityBlocks, blockLow };
 }
 
 function describeFertStatus(d) {
@@ -433,6 +442,7 @@ function describeFertStatus(d) {
     'Angka di bawah hanya bukti pendukung; jangan menuliskannya sebagai dosis anjuran.'];
   F.evidence.forEach(e => L.push(`- ${e.indikator}: kebun ${e.kebun} | acuan ${e.acuan} | ${e.arti}${e.arah === 'kurang' ? ' (mendukung indikasi kurang)' : e.arah === 'lebih' ? ' (mendukung indikasi berlebih)' : ''}.`));
   if (F.verdict !== 'berlebih' && !F.doseVerdict) L.push('- Kelebihan pupuk hanya bisa dinilai bila dosis aktual kebun diisi di sheet (label "Dosis NPK Aktual").');
+  if (F.priorityBlocks && F.priorityBlocks.length) L.push(`- Blok prioritas uji daun dan uji tanah (rutin dipanen, janjang paling jauh dari standar): ${F.priorityBlocks.join(', ')}.`);
   if (F.verdict === 'kurang' || F.verdict === 'berlebih') L.push(`PERLU DICEK: ${F.label.toLowerCase()} (${F.reason}); ${STATUS_PUPUK_SARAN.toLowerCase()}.`);
   return L.join('\n');
 }
@@ -442,5 +452,5 @@ function fertStatusTableRows(d) {
   const F = d.fertStatus;
   if (!F) return null;
   return F.evidence.map(e => [e.indikator, e.kebun, e.acuan, e.arti])
-    .concat([[`Kesimpulan: ${F.label}`, '', '', STATUS_PUPUK_SARAN]]);
+    .concat([[`Kesimpulan: ${F.label}`, F.priorityBlocks && F.priorityBlocks.length ? `Blok prioritas: ${F.priorityBlocks.slice(0, 3).join(', ')}` : '', '', STATUS_PUPUK_SARAN]]);
 }

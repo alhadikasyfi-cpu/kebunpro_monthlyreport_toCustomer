@@ -684,6 +684,21 @@ function buildTopics(d) {
       { colWidths: [2.6, 1.5, 1.6, 1.4, 1.6], fontSize: DECK_CONFIG.TYPE.TABLE_CELL, headerSize: DECK_CONFIG.TYPE.TABLE_HEADER, rowHeight: 25, headerHeight: 36, numCols: [1, 2, 3, 4] })
   });
 
+  // --- Produktivitas per blok (file 10): janjang/pokok/tahun vs standar Marihat umur blok ---
+  const BR = blockProdTableRows(d);
+  if (BR) T.push({
+    id: 'blokprod', title: 'Produktivitas per Blok',
+    visual: 'tabel blok prioritas (selisih janjang terbesar dari standar): blok, umur, luas, janjang/pokok/tahun realisasi / standar Marihat, capaian %, catatan penyebab (uji daun & tanah / rotasi panen / peremajaan)',
+    facts: describeBlockProduction(d),
+    fallback: (() => { const P = d.blockProd;
+      return `${fmt(P.lowPct, 0)}% luas blok menghasilkan janjang di bawah ${fmt(DECK_CONFIG.THRESHOLDS.BLOCK_LOW_ACH * 100, 0)}% standar umurnya; ` +
+        `${P.fertRows.length} blok rutin dipanen tetapi tetap rendah${P.fertRows.length ? ` (mis. ${P.fertRows.slice(0, 2).map(r => r.name).join(', ')})` : ''}, sehingga perlu uji daun dan uji tanah.` +
+        (P.gapRpTotal ? ` Potensi yang belum tercapai sekitar ${fmtRp(P.gapRpTotal)} per tahun.` : ''); })(),
+    draw: b => drawTable(b, ['Blok', 'Umur\nth', 'Luas\nha', 'Jjg/pokok/th\nrealisasi / standar', 'Capaian', 'Catatan'], BR,
+      { colWidths: [1.4, 0.8, 0.9, 1.9, 1.1, 3.0], fontSize: DECK_CONFIG.TYPE.TABLE_CELL, headerSize: DECK_CONFIG.TYPE.TABLE_HEADER, rowHeight: 25, headerHeight: 36, numCols: [1, 2, 3, 4],
+        cellColor: (r, c, txt) => (c === 4 ? (parseNum(txt) < DECK_CONFIG.THRESHOLDS.BLOCK_LOW_ACH * 100 ? DECK_CONFIG.COLOR.DANGER : null) : null) })
+  });
+
   // --- Jenis tanah & kebutuhan pupuk indikatif (file 9) ---
   const SR = soilTableRows(d);
   if (SR && SR.length) T.push({
@@ -844,12 +859,16 @@ function buildTopics(d) {
   const U = d.unsale;
   if (U && U.blocks.length) T.push({
     id: 'blokunsale', title: 'Blok Tanpa Penjualan',
-    visual: 'tabel blok yang paling sering tidak tercatat menjual janjang: blok, luas, tahun tanam, jumlah bulan tanpa penjualan, bulan terakhir',
+    visual: U.jjgTotal ? 'tabel blok dengan janjang dipanen terbanyak saat blok itu tidak tercatat menjual: blok, luas, tahun tanam, bulan tanpa penjualan, janjang dipanen'
+      : 'tabel blok yang paling sering tidak tercatat menjual janjang: blok, luas, tahun tanam, jumlah bulan tanpa penjualan, bulan terakhir',
     facts: describeUnsale(d),
-    fallback: `${U.chronic.length || U.blocks.length} blok tidak tercatat menjual janjang selama beberapa bulan; terbanyak ${U.blocks[0].name} (${fmt(U.blocks[0].ha, 2)} ha) ${U.blocks[0].months} dari ${U.months} bulan.`,
-    draw: b => drawTable(b, ['Blok', 'Luas\nha', 'Tahun\ntanam', 'Tanpa penjualan\nbulan', 'Terakhir\nbulan'],
-      U.blocks.slice(0, 9).map(x => [x.name, fmt(x.ha, 2), x.year ? String(x.year) : '-', `${x.months}/${U.months}`, x.last ? monthShort(x.last) : '-']),
-      { colWidths: [2.4, 1.3, 1.3, 1.8, 1.4], fontSize: DECK_CONFIG.TYPE.TABLE_CELL, headerSize: DECK_CONFIG.TYPE.TABLE_HEADER, rowHeight: 25, headerHeight: 36, numCols: [1, 2, 3] })
+    fallback: U.jjgTotal
+      ? `${fmt(U.jjgTotal, 0)} janjang dipanen di blok yang tidak tercatat menjual selama periode; terbanyak ${U.blocks[0].name} (${fmt(U.blocks[0].ha, 2)} ha) ${fmt(U.blocks[0].jjg, 0)} janjang dalam ${U.blocks[0].months} bulan.`
+      : `${U.chronic.length || U.blocks.length} blok tidak tercatat menjual janjang selama beberapa bulan; terbanyak ${U.blocks[0].name} (${fmt(U.blocks[0].ha, 2)} ha) ${U.blocks[0].months} dari ${U.months} bulan.`,
+    // janjang per blok tersedia: kolom terakhir = janjang dipanen tanpa penjualan tercatat (bukan bulan terakhir)
+    draw: b => drawTable(b, ['Blok', 'Luas\nha', 'Tahun\ntanam', 'Tanpa penjualan\nbulan', U.jjgTotal ? 'Janjang\ndipanen' : 'Terakhir\nbulan'],
+      U.blocks.slice(0, 9).map(x => [x.name, fmt(x.ha, 2), x.year ? String(x.year) : '-', `${x.months}/${U.months}`, U.jjgTotal ? fmt(x.jjg, 0) : (x.last ? monthShort(x.last) : '-')]),
+      { colWidths: [2.4, 1.3, 1.3, 1.8, 1.4], fontSize: DECK_CONFIG.TYPE.TABLE_CELL, headerSize: DECK_CONFIG.TYPE.TABLE_HEADER, rowHeight: 25, headerHeight: 36, numCols: U.jjgTotal ? [1, 2, 3, 4] : [1, 2, 3] })
   });
 
   // --- Komposisi biaya pekerja per bulan (panen / perawatan / muat) ---
@@ -931,7 +950,7 @@ function detectAnomalies(topics, data) {
   if (data.partialMonth) push(null, `${data.partialMonth} bulan berjalan, belum lengkap dan tidak dianalisis.`);
   // Prioritas bisnis: inkonsistensi > rugi > BJR/upah tidak wajar > restan > harga tetap > angka menyimpang > data kosong
   const rank = a => /ANOMALI DATA|TIDAK KONSISTEN/.test(a.text) ? 1 : /NEGATIF/.test(a.text) ? 2
-    : /kebocoran janjang|tanpa catatan berat|TIDAK BISA DIUKUR|tidak ada janjang terjual tercatat/.test(a.text) ? 2 : /tidak tercatat menjual/.test(a.text) ? 3 : /acuan umur|melebihi harga|produktivitas baru/.test(a.text) ? 3 : /restan|melebihi dipanen/.test(a.text) ? 4 : /persis sama/.test(a.text) ? 5
+    : /kebocoran janjang|tanpa catatan berat|TIDAK BISA DIUKUR|tidak ada janjang terjual tercatat/.test(a.text) ? 2 : /tidak tercatat menjual|kurang hara|jarang dipanen/.test(a.text) ? 3 : /acuan umur|melebihi harga|produktivitas baru/.test(a.text) ? 3 : /restan|melebihi dipanen/.test(a.text) ? 4 : /persis sama/.test(a.text) ? 5
     : /bulan berjalan/.test(a.text) ? 9 : /belum tersedia|belum dicatat|kosong pada|tercatat 0|NOL/.test(a.text) ? 7 : 6;
   return out.sort((a, b) => rank(a) - rank(b));
 }
@@ -971,7 +990,7 @@ const MAIN_GROUPS = [
     question: 'Bagaimana hasil dan uang kebun bulan ini: berapa ton terjual, berapa uang masuk, dan berapa yang tersisa?' },
   { id: 'm_kebocoran', title: 'Kebocoran Janjang', members: ['alurjjg', 'tanpaberat', 'blokunsale', 'restan'], chart: ['alurjjg', 'tanpaberat', 'restan'],
     question: 'Berapa janjang atau uang yang hilang bulan ini antara panen dan penjualan, dibanding bulan lalu, dan di mana hilangnya?' },
-  { id: 'm_penyebab', title: 'Penyebab Naik-Turun Hasil', members: ['jjg', 'bjr', 'umur', 'tanah', 'pupuk', 'umuryield', 'replanting'], chart: ['bjr', 'jjg', 'umur'],
+  { id: 'm_penyebab', title: 'Penyebab Naik-Turun Hasil', members: ['jjg', 'blokprod', 'bjr', 'umur', 'tanah', 'pupuk', 'umuryield', 'replanting'], chart: ['bjr', 'jjg', 'umur'],
     question: 'Apa penyebab utama hasil per hektar rendah atau naik-turun: jumlah janjang, berat janjang (BJR), umur tanaman, atau kondisi tanah dan pemupukan?' },
   { id: 'm_keuangan', title: 'Keuangan Kebun', members: ['laba', 'biayakomposisi', 'biayakg', 'efisiensi', 'biayaha', 'upkeep', 'margin'], chart: ['laba', 'biayaha', 'biayakomposisi', 'margin', 'biayakg'],
     question: 'Berapa uang yang tersisa setiap bulan setelah biaya pekerja, dan apa yang membuatnya turun atau rugi?' },
@@ -1031,7 +1050,9 @@ const MAIN_SUMMARY = {
         { label: 'Produktivitas', unit: 'ton TBS/ha/tahun', cur: M.realTonHa, ref: M.pot.ton, f: v => fmt(v, 1), goodUp: true },
         { label: 'BJR', unit: 'kg per janjang', cur: M.realBjr, ref: M.pot.rbt, f: v => fmt(v, 1), goodUp: true },
         { label: 'Janjang per pokok', unit: 'janjang/pokok/tahun', cur: M.realRjt, ref: M.pot.rjt, f: v => fmt(v, 1), goodUp: true },
-        S ? { label: 'Data jenis tanah', unit: '% luas blok tercatat', cur: S.knownPct, ref: 100, f: v => `${fmt(v, 0)}%`, goodUp: true } : null
+        // produksi per blok tersedia: porsi luas blok yang memenuhi standar janjang (lebih bermakna dari kelengkapan data tanah)
+        d.blockProd ? { label: 'Luas blok sesuai standar', unit: `% luas, janjang ≥ ${fmt(DECK_CONFIG.THRESHOLDS.BLOCK_LOW_ACH * 100, 0)}% standar`, cur: 100 - d.blockProd.lowPct, ref: 100, f: v => `${fmt(v, 0)}%`, goodUp: true }
+          : S ? { label: 'Data jenis tanah', unit: '% luas blok tercatat', cur: S.knownPct, ref: 100, f: v => `${fmt(v, 0)}%`, goodUp: true } : null
       ].filter(Boolean),
       // pesan pupuk didahulukan: indikasi kurang/kelebihan pupuk + ajakan uji daun & tanah
       caption: d.fertStatus && d.fertStatus.verdict !== 'sesuai' ? `${d.fertStatus.label}: ${d.fertStatus.reason}. ${STATUS_PUPUK_SARAN}.`
@@ -1138,6 +1159,10 @@ function dataHeadline(id, d) {
     marihat: () => (M ? [`Hasil baru ${pct(M.achTon)} dari standar Marihat`] : null),
     bjr: () => (M && M.achBjr ? [`BJR ${fmt(M.realBjr, 1)} kg, ${pct(M.achBjr)} dari standar umur`] : null),
     replanting: () => (B && B.replant.length ? [`${B.replant.length} blok (${fmt(B.replant.reduce((x, b) => x + b.ha, 0), 0)} ha) lewat umur ekonomis`] : null),
+    blokprod: () => { const P = d.blockProd; if (!P) return null;
+      if (P.fertRows.length) return [`${P.fertRows.length} blok rutin dipanen, janjang di bawah standar`, `${P.fertRows.length} blok janjang rendah, perlu uji daun`];
+      if (P.lowPct >= 10) return [`${fmt(P.lowPct, 0)}% luas blok di bawah standar janjang`];
+      return P.best ? [`Blok ${P.best.name} paling produktif, ${fmt(P.best.rjt, 1)} jjg/pokok`] : null; },
     tanah: () => (!S ? null : S.unknownPct >= 50 ? [`${fmt(S.unknownPct, 0)}% luas belum ada data jenis tanah`, 'Jenis tanah sebagian besar belum tercatat']
       : S.dominant ? [`Tanah dominan ${S.dominant.name.toLowerCase()}, ${fmt(S.dominant.pct, 0)}% luas`, `Tanah dominan ${S.dominant.name.toLowerCase()}`] : null),
     pupuk: () => { const F2 = d.fertStatus; if (!F2) return null;
@@ -1231,7 +1256,7 @@ function drawProfitChart(b, rev, cost) {
 
 /** Nama pendek slide lampiran untuk tombol (maks. ±18 karakter) dan Daftar Lampiran. */
 const SHORT_TITLES = {
-  scorecard: 'Tabel kinerja', tanah: 'Jenis tanah', pupuk: 'Status pupuk', produksi: 'Tren TBS terjual', panen: 'Luas panen', yield: 'Yield per ha', marihat: 'Std. Marihat',
+  scorecard: 'Tabel kinerja', blokprod: 'Produktivitas blok', tanah: 'Jenis tanah', pupuk: 'Status pupuk', produksi: 'Tren TBS terjual', panen: 'Luas panen', yield: 'Yield per ha', marihat: 'Std. Marihat',
   jjg: 'Janjang/ha', bjr: 'BJR', umur: 'Umur tanaman', umuryield: 'Umur vs yield', replanting: 'Replanting',
   alurjjg: 'Alur janjang', restan: 'Panen vs muat', tanpaberat: 'Tanpa berat', blokunsale: 'Blok tanpa jual',
   laba: 'Laba kotor', biayakg: 'Biaya per kg', efisiensi: 'Porsi biaya', biayakomposisi: 'Komposisi biaya', biayaha: 'Biaya per ha',
@@ -1286,6 +1311,9 @@ const STORY = [
   { id: 'jjg', section: 'Faktor Penentu Yield', title: 'Janjang Terjual per Hektar',
     q: 'Berapa janjang terjual per hektar luas panen, dan apakah berubah?',
     link: 'Mengapa hasil naik-turun: yield = JJG/ha × BJR. Dilihat dulu jumlah tandan per hektar.' },
+  { id: 'blokprod', section: 'Faktor Penentu Yield', title: 'Produktivitas per Blok',
+    q: 'Blok mana yang janjangnya jauh di bawah standar untuk umurnya, apa kemungkinan penyebabnya (hara, rotasi panen, umur), dan berapa potensi yang belum tercapai?',
+    link: 'JJG/ha kebun (slide sebelumnya) dirinci per blok dan dibandingkan dengan standar Marihat sesuai umur tiap blok.' },
   { id: 'bjr', section: 'Faktor Penentu Yield', title: 'Berat Janjang Rata-rata (BJR)',
     q: 'Apakah berat tiap tandan berubah?',
     link: 'Faktor kedua yield: berat tandan. Bersama JJG/ha pada slide sebelumnya, keduanya menjelaskan yield.' },

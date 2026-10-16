@@ -46,6 +46,9 @@ function buildFertilizerNeed(){ return null; }
 function readHaraVegetatif(){ return 0; }
 function buildFertilizerStatus(){ return null; }
 function describeFertStatus(){ return 'STATUS PEMUPUKAN: -'; }
+function buildBlockProduction(){ return null; }
+function describeBlockProduction(){ return 'PRODUKSI PER BLOK: -'; }
+function blockProdTableRows(){ return null; }
 function mkey(p){ return p.y + '-' + p.m; }
 const KPI_LIBRARY = {};
 function fmt(n, d){ if (n===null||n===undefined||isNaN(n)) return '-'; const p=Math.abs(n).toFixed(d===undefined?2:d).split('.'); p[0]=p[0].replace(/(?=(?:[0-9]{3})+$)(?!^)/g,'.'); return (n<0?'-':'')+p.join(','); }
@@ -248,22 +251,26 @@ ok(/▲ 20%/.test(cmp.req) && /Sep 26 \(bulan laporan\)/.test(cmp.req) && cmp.te
 // 10. Uji integrasi: file 1–9 ASLI (tanpa tiruan) dengan sheet tiruan berformat terbaru (blok + jenis tanah)
 const ctx2 = Object.assign({}, ctx); delete ctx2.sheet; vm.createContext(ctx2);
 for (const f of ['1_ConfigAndStyle.gs', '3_TextAndDataMapper.gs', '4_ClaudeBridge.gs', '5_MainController.gs', '6_ShapeCharts.gs',
-                 '7_RecommendationCatalog.gs', '8_StandarMarihat.gs', '9_TanahPupuk.gs']) vm.runInContext(fs.readFileSync(OUT + f, 'utf8'), ctx2, { filename: f });
+                 '7_RecommendationCatalog.gs', '8_StandarMarihat.gs', '9_TanahPupuk.gs', '10_ProduksiBlok.gs']) vm.runInContext(fs.readFileSync(OUT + f, 'utf8'), ctx2, { filename: f });
 const W = 20, blank = () => Array(W).fill('');
 const G = []; for (let i = 0; i < 60; i++) G.push(blank());
 const put = (r, c, v) => { G[r][c] = v; };
 put(0, 0, 'Title'); put(0, 1, 'Kebun Uji'); put(0, 2, 'Dosis NPK Aktual'); put(0, 3, 5); put(1, 2, 'Harga Pupuk NPK'); put(1, 3, 12000); put(1, 0, 'Period'); put(1, 1, 'Mar 2026 - Sep 2026'); put(2, 0, 'Lokasi'); put(2, 1, 'Dumai');
 ['year_month', 'ton/ha', 'jjg/ha', 'luas panen', 'hargajual/kg', 'total_janjang', 'total_sale_jjg', 'janjang_terjual_tanpa_berat', 'total_tonasehasil', 'avg_bjr_kg',
- 'block sale (name, luas, tahun tanam, soil type)', 'block unsale (name, luas, tahun tanam, soil type)'].forEach((h, c) => put(3, c, h));
+ 'block sale (name, luas, tahun tanam, soil type, total janjang)', 'block unsale (name, luas, tahun tanam, soil type, total janjang)'].forEach((h, c) => put(3, c, h));
 ['Month', 'jjg Dipanen', 'jjg Dimuat', 'jjg Masuk trip', 'jjg Terjual', 'jjg Terjual tanpa berat'].forEach((h, i) => put(3, 14 + i, h));
-const sale = 'A1, 20 ha, 2007, Gambut; A2, 15 ha, 1998, Podsolik Merah Kuning; B1, 10 ha, 2015, -; Robert C, 8 ha, 2010, -';
-const unsale = 'B2, 12 ha, 2016, Gambut; C1, 5 ha, 0, -';
+// Blok + janjang dipanen per blok (bagian ke-5). A1 rutin dipanen tetapi janjang rendah; B1 dipanen jarang (rotasi);
+// A2 lewat umur ekonomis; Robert C produktif (±110% standar). Jumlah per bulan disamakan dengan total janjang kebun.
+const blokJjg = (i, pn) => { const a1 = 300, a2 = 200, b1 = i % 3 === 0 ? 900 : 0, b2 = i % 2 ? 400 : 0, c1 = 0;
+  const rc = pn - a1 - a2 - b1 - b2 - c1; return { a1, a2, b1, b2, rc }; };
+const saleOf = (i, pn) => { const j = blokJjg(i, pn); return `A1, 20 ha, 2007, Gambut, ${j.a1}; A2, 15 ha, 1998, Podsolik Merah Kuning, ${j.a2}; B1, 10 ha, 2015, -, ${j.b1}; Robert C, 50 ha, 2010, -, ${j.rc}`; };
+const unsaleOf = (i, pn) => `B2, 12 ha, 2016, Gambut, ${blokJjg(i, pn).b2}; C1, 5 ha, 0, -`;
 const M = [ // bulan, panen, terjual berberat, tanpa berat, ton, harga
   [2, 6000, 5600, 100, 110, 2900], [3, 6200, 5900, 50, 118, 2950], [4, 5800, 5500, 0, 112, 2800], [5, 6500, 6000, 200, 121, 2750],
   [6, 6400, 6100, 100, 125, 2960], [7, 6100, 5300, 300, 108, 2890], [8, 6600, 4800, 400, 96, 2910]];
 M.forEach(([m, pn, sold, nw, ton, h], i) => {
   const r = 4 + i, date = `1/${m + 1}/2026`, lp = 53;
-  [date, ton / lp, sold / lp, lp, h, pn, sold, nw, ton, (ton * 1000) / sold, sale, i % 2 ? unsale : ''].forEach((v, c) => put(r, c, v));
+  [date, ton / lp, sold / lp, lp, h, pn, sold, nw, ton, (ton * 1000) / sold, saleOf(i, pn), i % 2 ? unsaleOf(i, pn) : ''].forEach((v, c) => put(r, c, v));
   [date, pn, pn - 100, pn - 100, sold, nw].forEach((v, k) => put(r, 14 + k, v));
 });
 put(24, 0, 'Analisis Pengeluaran');
@@ -282,7 +289,7 @@ const run2 = code => vm.runInContext(code, ctx2);
 run2('RUN_WARNINGS = []; var D2 = loadSheetData(sheet2); var P2 = planDeck(D2);');
 const D2 = run2('D2'), P2 = run2('P2');
 ok(D2.blocks && D2.blocks.blocks.length === 6 && D2.blocks.blocks.find(b => b.name === 'A1').soil === 'Gambut', `blok format terbaru terbaca: ${D2.blocks && D2.blocks.blocks.length} blok unik, jenis tanah per blok`);
-ok(D2.soil && D2.soil.groups.map(g => g.name).join() === 'Gambut,Podsolik Merah Kuning,Belum tercatat' && Math.round(D2.soil.unknownHa) === 23,
+ok(D2.soil && D2.soil.groups.map(g => g.name).join() === 'Gambut,Podsolik Merah Kuning,Belum tercatat' && Math.round(D2.soil.unknownHa) === 65,
   `jenis tanah: ${D2.soil && D2.soil.groups.map(g => `${g.name} ${g.ha} ha`).join(', ')}`);
 ok(D2.fertilizer && D2.fertilizer.totalTon > 0 && D2.fertilizer.haNoAge === 5, `kebutuhan pupuk indikatif ${D2.fertilizer && D2.fertilizer.totalTon.toFixed(1)} ton/tahun (blok tanpa tahun tanam tidak dihitung)`);
 const c2 = D2.flow.cur, p2 = D2.flow.prev;
@@ -346,5 +353,40 @@ ok(run2('readHaraVegetatif(ssMock)') === 4 && run2('haraVegetatifAt(7).N') === 3
   'tabel hara vegetatif dibaca dari sheet "pupuk" (umur di atas tabel memakai baris terakhir)');
 run2('HARA_VEGETATIF = HARA_VEGETATIF_DEFAULT');
 ok(run2('dataHeadline("m_kebocoran", D2)') && /Sep|September/.test(run2('dataHeadline("m_kebocoran", D2)')), `judul otomatis kebocoran: "${run2('dataHeadline("m_kebocoran", D2)')}"`);
+
+// 11. Produksi per blok (janjang dipanen per blok) + kaitan dengan status pupuk
+const pb = run2(`parseBlocks('F10, 3.39 ha, 2012, -, 342; B8, 1.49 ha, 2017, -; Blok Pasar Bingung, 5 ha, 2009, Gambut, 1084')`);
+ok(pb[0].jjg === 342 && pb[0].soil === null && pb[1].jjg === null && pb[2].soil === 'Gambut' && pb[2].jjg === 1084,
+  'format blok 5 bagian: janjang per blok terbaca; isian tanpa janjang = belum tercatat (bukan nol)');
+const BP = D2.blockProd, rowB = n => BP.rows.find(r => r.name === n);
+ok(BP && rowB('A1').cat === 'hara' && rowB('A2').cat === 'tua' && rowB('B1').cat === 'rotasi' && rowB('B2').cat === 'rotasi' && rowB('Robert C').cat === 'baik' && !BP.mismatchMonths.length,
+  `penyebab blok rendah dipisahkan: A1 ${(rowB('A1').ach * 100).toFixed(0)}% standar & rutin dipanen (hara), B1 dipanen ${rowB('B1').harvestMonths}/${BP.nMonths} bln (rotasi), A2 umur ${rowB('A2').age} th (peremajaan)`);
+ok(Math.abs(rowB('A1').rjt - 300 * 12 / (20 * 143)) < 1e-9 && rowB('A1').std.rjt === 6.1 && BP.fertRows.map(r => r.name).join() === 'A1' && BP.gapJjgTotal > 0 && BP.pareto.blocks >= 1,
+  `janjang/pokok/tahun per blok vs standar Marihat; potensi belum tercapai ±${Math.round(BP.gapJjgTotal)} jjg/th`);
+// Blok dengan janjang/pokok tak wajar (>200% standar) dikeluarkan dari analisis; catatan blok di atas ambang tapi <100% tidak disebut "sesuai"
+const bpS = run2(`(function(){ const r = D2.blocks.blocks.find(b => b.name === 'Robert C'), ha = r.ha; r.ha = ha / 20;
+  const P = buildBlockProduction(D2); D2.__txt = describeBlockProduction(Object.assign({}, D2, { blockProd: P })); r.ha = ha; return P; })()`);
+const rcS = bpS.rows.find(r => r.name === 'Robert C');
+ok(rcS.cat === 'cek' && bpS.suspectRows.length === 1 && bpS.best.name !== 'Robert C' && !bpS.priority.some(r => r.cat === 'cek') && /PERLU DICEK DATA: 1 blok/.test(D2.__txt),
+  `blok >200% standar (Robert C ${Math.round(rcS.ach * 100)}%) ditandai "cek luas/nama blok", tidak jadi blok terbaik`);
+ok(run2(`blockNote({ cat: 'baik', ach: 0.69 })`) === 'di bawah standar, masih di atas ambang 60%' && run2(`blockNote({ cat: 'baik', ach: 1.1 })`) === 'sesuai atau di atas standar',
+  'catatan blok 69% standar tidak lagi disebut "sesuai standar"');
+const FS3 = D2.fertStatus;
+const blokEv = F => F.evidence.find(e => e.indikator === 'Blok janjang rendah');
+ctx2.dW = Object.assign({}, D2, { blockProd: Object.assign({}, D2.blockProd, { fertPct: 35 }) });
+const FS4 = run2('buildFertilizerStatus(dW)');
+ok(FS3.priorityBlocks.join() === 'A1' && blokEv(FS3).arah === 'netral' && blokEv(FS4).arah === 'kurang' && FS4.verdict === 'kurang',
+  `status pupuk memakai bukti per blok (${Math.round(D2.blockProd.fertPct)}% luas = netral, 35% = mendukung kurang): ${FS4.label}; blok prioritas uji daun & tanah: ${FS3.priorityBlocks.join(', ')}`);
+const bpT = P2.appendix.find(t => t.id === 'blokprod');
+const bpReq = run2(`(function(){ const t = P2.appendix.find(x => x.id === 'blokprod'); const b = new SlideBatch('pg','bp'); t.draw(b); return JSON.stringify(b.req); })()`);
+ok(bpT && bpT.mainOf.id === 'm_penyebab' && /rutin dipanen, janjang rendah/.test(bpReq) && /rotasi panen/.test(bpReq) && /peremajaan/.test(bpReq),
+  'lampiran Produktivitas per Blok (tema Penyebab): tabel blok prioritas + catatan penyebab');
+ok(D2.unsale.jjgTotal === 1200 && /Janjang\\ndipanen/.test(run2(`(function(){ const t = P2.appendix.find(x => x.id === 'blokunsale'); const b = new SlideBatch('pg','bu'); t.draw(b); return JSON.stringify(b.req); })()`)),
+  `blok tanpa penjualan kini menghitung janjang dipanen per blok (${D2.unsale.jjgTotal} jjg)`);
+ok(/PRODUKSI PER BLOK/.test(pk2.text) && /Blok prioritas uji daun dan uji tanah/.test(pk2.text) &&
+   run2(`MAIN_SUMMARY.m_penyebab(D2).rows.map(r => r.label).join()`).indexOf('Luas blok sesuai standar') >= 0 &&
+   /^1 blok rutin dipanen/.test(run2('dataHeadline("blokprod", D2)')) &&
+   /mulai dari blok A1/.test(run2('detectRecommendations(D2, P2.topics, detectAnomalies(P2.topics, D2))').find(r => r.code === 'R23').evidence),
+  'paket, grafik kesimpulan Penyebab, judul otomatis, dan R23 memakai produksi per blok');
 
 console.log(process.exitCode ? '\nADA YANG GAGAL' : '\nSEMUA UJI LOLOS');

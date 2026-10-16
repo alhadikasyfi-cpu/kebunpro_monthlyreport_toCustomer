@@ -117,7 +117,11 @@ const DECK_CONFIG = {
     UNSALE_MONTHS: 3,           // blok tanpa penjualan ≥ 3 bulan -> blok perlu ditelusuri
     BJR_BELOW_ACUAN: 0.10,      // BJR < 90% batas bawah acuan umur -> PERLU DICEK
     FIRST_MONTH_RAMP: 0.5,      // bulan pertama luas panen < 50% median -> kemungkinan bulan awal belum penuh
-    REPEAT_SAME_MIN: 3          // nilai persis sama ≥ 3 bulan berturut-turut -> kemungkinan isian tetap
+    REPEAT_SAME_MIN: 3,         // nilai persis sama ≥ 3 bulan berturut-turut -> kemungkinan isian tetap
+    BLOCK_LOW_ACH: 0.6,         // janjang/pokok/tahun blok < 60% standar Marihat umurnya -> blok berproduktivitas rendah
+    BLOCK_REGULAR: 0.7,         // blok dipanen ≥ 70% bulan periode = panen teratur (rendahnya bukan karena rotasi)
+    BLOCK_SUSPECT_ACH: 2.0,     // janjang/pokok > 200% standar -> kemungkinan salah luas/nama blok, dikeluarkan dari analisis blok
+    BLOCK_LOW_AREA: 0.3         // ≥ 30% luas blok berproduktivitas rendah -> ikut menjadi bukti indikasi kurang pupuk
   },
 
   // Kelas umur untuk pengelompokan blok. Acuan BJR & produktivitas per umur memakai Standar Marihat (file 8).
@@ -258,8 +262,9 @@ const DECK_CONFIG = {
     SALE_JJG: ['total_sale_jjg'],                          // janjang terjual yang ada beratnya
     NOWEIGHT_JJG: ['janjang_terjual_tanpa_berat'],         // janjang terjual TANPA catatan berat
     TONASE: ['total_supply_ton', 'total_tonasehasil', 'total_tonase', 'tonase', 'total tonase hasil'],
-    // Isi sel blok: "nama, luas ha, tahun tanam, jenis tanah; ..." (jenis tanah boleh "-" bila belum tercatat).
-    // Header yang memakai keterangan dalam kurung, mis. "block sale (name, luas, tahun tanam, soil type)", juga dikenali.
+    // Isi sel blok: "nama, luas ha, tahun tanam, jenis tanah, janjang dipanen; ..." (jenis tanah boleh "-";
+    // janjang = janjang DIPANEN di blok itu pada bulan itu, boleh kosong). Header berketerangan dalam kurung,
+    // mis. "block sale (name, luas, tahun tanam, soil type, total janjang)", juga dikenali.
     BLOCKS: ['block_sale', 'block sale', 'block (name, hectarage, planted year)', 'block', 'blok'],
     BLOCKS_UNSALE: ['block_unsale', 'block unsale'],        // blok tanpa penjualan bulan itu
     BJR: ['avg_bjr_kg'],

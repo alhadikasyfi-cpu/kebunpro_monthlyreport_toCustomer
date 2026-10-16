@@ -373,6 +373,7 @@ function getSheetData(sheet) {
   // setelah tabel hara sheet "pupuk", dosis NPK aktual, dan harga NPK dibaca.
   d.fertilizer = buildFertilizerNeed(d);
   d.npk = d.fertilizer;
+  d.blockProd = buildBlockProduction(d);   // produksi per blok (file 10), bukti untuk status pupuk
   d.fertStatus = buildFertilizerStatus(d);
   d.flow = buildFlow(d);
   // Tonase = berat janjang DIPANEN: penjualan hanya dari janjang yang terjual -> tonase × (terjual ÷ dipanen) × harga
@@ -399,17 +400,20 @@ function getSheetData(sheet) {
 /* ------------------------------------------------------------------------- */
 
 /**
- * "E4, 4.5 ha, 2010, Gambut; A9, 2.48 ha, 1998, -" -> [{name, ha, year|null, soil|null}]
- * Bagian ke-4 (jenis tanah) opsional; "-" atau kosong = belum tercatat. Tahun 0 = belum tercatat.
+ * "E4, 4.5 ha, 2010, Gambut, 342; A9, 2.48 ha, 1998, -, 87" -> [{name, ha, year|null, soil|null, jjg|null}]
+ * Bagian ke-4 (jenis tanah) dan ke-5 (janjang DIPANEN di blok itu pada bulan itu) opsional;
+ * "-" atau kosong = belum tercatat. Tahun 0 = belum tercatat. Janjang kosong = belum tercatat (bukan nol).
  */
 function parseBlocks(text) {
   return String(text || '').split(';').map(t => t.trim()).filter(Boolean).map(t => {
     const m = t.match(/^(.*?),\s*([\d.,]+)\s*ha\s*,\s*(\d{1,4})\s*(?:,\s*(.*?))?\s*$/i);
     if (!m) return null;
     const year = Number(m[3]);
-    const soil = String(m[4] || '').trim();
+    let soil = String(m[4] || '').trim(), jjg = null;
+    const j = soil.match(/^(.*?)\s*,\s*([\d.]+)\s*$/);           // "-, 342" | "Gambut, 1084"
+    if (j) { soil = j[1].trim(); jjg = parseNum(j[2]); }
     return { name: m[1].trim(), ha: parseNum(m[2]) || 0, year: year >= 1950 ? year : null,
-             soil: soil && !/^[-–—]+$/.test(soil) ? soil : null };
+             soil: soil && !/^[-–—]+$/.test(soil) ? soil : null, jjg };
   }).filter(Boolean);
 }
 
@@ -429,9 +433,13 @@ function buildBlockAnalytics(d) {
     let haSum = 0, ageHa = 0, ageHaBase = 0, oldHa = 0, newCount = 0, newHa = 0;
     list.forEach(b => {
       const key = `${b.name}|${b.ha}|${b.year}`;
-      if (!uniq[key]) uniq[key] = { name: b.name, ha: b.ha, year: b.year, soil: null, months: 0 };
+      if (!uniq[key]) uniq[key] = { name: b.name, ha: b.ha, year: b.year, soil: null, months: 0, jjgSum: 0, jjgMonths: 0, jjgByMonth: {} };
       uniq[key].months++;
       if (b.soil) uniq[key].soil = b.soil;   // jenis tanah: isian terakhir yang tercatat
+      if (b.jjg !== null && b.jjg !== undefined) {   // janjang dipanen per blok (bagian ke-5)
+        uniq[key].jjgSum += b.jjg; uniq[key].jjgByMonth[mkey(row.p)] = (uniq[key].jjgByMonth[mkey(row.p)] || 0) + b.jjg;
+        if (b.jjg > 0) uniq[key].jjgMonths++;
+      }
       if (!seenBefore[key] && Object.keys(seenBefore).length) { newCount++; newHa += b.ha; }
       haSum += b.ha;
       if (b.year) {
@@ -855,9 +863,10 @@ function buildUnsaleAnalytics(d) {
   const map = {};
   d.blocksUnsaleRaw.forEach(row => parseBlocks(row.value).forEach(b => {
     const k = `${b.name}|${b.ha}|${b.year}`;
-    if (!map[k]) map[k] = { name: b.name, ha: b.ha, year: b.year, soil: null, months: 0, last: null };
+    if (!map[k]) map[k] = { name: b.name, ha: b.ha, year: b.year, soil: null, months: 0, last: null, jjg: 0 };
     map[k].months++; map[k].last = row.p;
     if (b.soil) map[k].soil = b.soil;
+    if (b.jjg) map[k].jjg += b.jjg;   // janjang dipanen di blok saat blok itu tidak tercatat menjual
   }));
   const blocks = Object.keys(map).map(k => map[k]).sort((a, b) => b.months - a.months || b.ha - a.ha);
   const monthly = d.blocksUnsaleRaw.map(row => {
@@ -865,8 +874,10 @@ function buildUnsaleAnalytics(d) {
     const all = parseBlocks(valAt(d.blocksRaw, row.p) || ''), haAll = all.reduce((a, b) => a + b.ha, 0);
     return { p: row.p, label: row.label, count: list.length, ha, share: haAll ? (ha / haAll) * 100 : null };
   });
+  const jjgTotal = blocks.reduce((a, b) => a + b.jjg, 0);
+  if (jjgTotal) blocks.sort((a, b) => b.jjg - a.jjg || b.months - a.months);   // ada janjang per blok: urut janjang terbesar
   return { blocks, monthly, months: n, chronic: blocks.filter(b => b.months >= DECK_CONFIG.THRESHOLDS.UNSALE_MONTHS),
-           series: monthly.map(x => ({ p: x.p, label: x.label, value: x.share })) };
+           jjgTotal, series: monthly.map(x => ({ p: x.p, label: x.label, value: x.share })) };
 }
 
 function describeUnsale(d) {
@@ -874,7 +885,8 @@ function describeUnsale(d) {
   if (!U) return 'Blok tanpa penjualan: data belum tersedia.';
   const L = [`BLOK TANPA PENJUALAN (blok yang DIPANEN tetapi janjangnya tidak dijual atau tidak tercatat sampai terjual): ${U.blocks.length} blok; ${U.chronic.length} blok ≥ ${DECK_CONFIG.THRESHOLDS.UNSALE_MONTHS} bulan.`];
   L.push(`- per bulan (jumlah blok | ha | % luas blok tercatat): ${U.monthly.map(x => `${x.label} ${x.count} | ${fmt(x.ha, 1)} ha | ${x.share === null ? '-' : fmt(x.share, 0) + '%'}`).join('; ')}`);
-  L.push(`- blok paling sering tanpa penjualan: ${U.blocks.slice(0, 8).map(b => `${b.name} ${fmt(b.ha, 2)} ha (tanam ${b.year || '-'}) ${b.months}/${U.months} bln`).join('; ')}`);
+  L.push(`- blok ${U.jjgTotal ? 'dengan janjang dipanen tanpa penjualan tercatat terbanyak' : 'paling sering tanpa penjualan'}: ${U.blocks.slice(0, 8).map(b => `${b.name} ${fmt(b.ha, 2)} ha (tanam ${b.year || '-'}) ${b.months}/${U.months} bln${U.jjgTotal ? `, ${fmt(b.jjg, 0)} jjg` : ''}`).join('; ')}`);
+  if (U.jjgTotal) L.push(`- total janjang dipanen di blok saat blok itu tidak tercatat menjual: ${fmt(U.jjgTotal, 0)} janjang selama periode.`);
   if (U.chronic.length) L.push(`PERLU DICEK: ${U.chronic.length} blok (${fmt(U.chronic.reduce((a, b) => a + b.ha, 0), 1)} ha) dipanen tetapi tidak tercatat menjual janjang selama ≥ ${DECK_CONFIG.THRESHOLDS.UNSALE_MONTHS} bulan; cek janjang tertinggal/restan di blok itu atau penjualan yang tidak dicatat per blok.`);
   return L.join('\n');
 }
