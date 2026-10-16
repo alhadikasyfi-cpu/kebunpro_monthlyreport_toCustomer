@@ -591,17 +591,18 @@ function buildTopics(d) {
   const M = d.marihat;
   if (M) T.push({
     id: 'marihat', title: 'Pencapaian vs Standar Marihat',
-    visual: `tabel realisasi vs potensi standar Marihat (PPKS) kelas ${M.cls}: produktivitas ton/ha/tahun, BJR, janjang per pokok, produksi setahun`,
+    visual: `tabel realisasi vs potensi standar Marihat (PPKS) kelas ${M.cls}: produktivitas ton/ha/tahun, BJR, janjang per ha, produksi setahun`,
     facts: describeMarihat(d),
     fallback: `Produktivitas kebun ${fmt(M.realTonHa, 1)} ton TBS/ha/tahun, ${fmtPct(M.achTon * 100, 0)} dari potensi standar Marihat ${M.cls} sebesar ${fmt(M.pot.ton, 1)} ton untuk umur tanamannya. Selisihnya sekitar ${fmt(M.gapTon, 0)} ton per tahun${M.gapRp ? ` atau ${fmtRp(M.gapRp)}` : ''}.`,
     draw: b => drawTable(b, ['Indikator', 'Realisasi', `Standar Marihat\nkelas ${M.cls}`, 'Pencapaian'], [
       ['Produktivitas (ton TBS/ha/tahun)', fmt(M.realTonHa, 1), fmt(M.pot.ton, 1), fmtPct(M.achTon * 100, 0)],
       ['BJR (kg/janjang)', fmt(M.realBjr, 1), fmt(M.pot.rbt, 1), M.achBjr ? fmtPct(M.achBjr * 100, 0) : '-'],
-      [`Janjang per pokok per tahun${d.sphAssumed ? '*' : ''}`, M.realRjt ? fmt(M.realRjt, 1) : '-', fmt(M.pot.rjt, 1), M.achRjt ? fmtPct(M.achRjt * 100, 0) : '-'],
+      ['Janjang per ha per tahun', M.realJjgHa ? fmt(M.realJjgHa, 0) : '-', fmt(M.pot.jjgHa, 0), M.achJjg ? fmtPct(M.achJjg * 100, 0) : '-'],
+      ...(M.realRjt ? [['Janjang per pokok per tahun', fmt(M.realRjt, 1), fmt(M.pot.rjt, 1), fmtPct(M.achRjt * 100, 0)]] : []),
       [M.usePanen ? 'Produksi panen setahun (ton, estimasi)' : 'Produksi setahun (ton TBS)', fmt(M.realTonYear, 0), fmt(M.potTonYear, 0), fmtPct((M.realTonYear / M.potTonYear) * 100, 0)],
       ...(M.usePanen ? [['TBS terjual setahun (ton)', fmt(M.soldTonYear, 0), '-', fmtPct((M.soldTonYear / M.potTonYear) * 100, 0)]] : []),
       ['Potensi tambahan per tahun', '-', `${fmt(M.gapTon, 0)} ton`, M.gapRp ? fmtRpShort(M.gapRp) : '-'],
-      [`Dasar: ${fmt(M.area, 1)} ha blok${M.annualized ? `, disetahunkan dari ${M.nMonths} bln` : ''}`, '', d.landClassAssumed ? 'kelas lahan diasumsikan' : '', d.sphAssumed ? `*${d.sph} pokok/ha` : '']
+      [`Dasar: ${fmt(M.area, 1)} ha blok${M.annualized ? `, disetahunkan dari ${M.nMonths} bln` : ''}`, '', d.landClassAssumed ? 'kelas lahan diasumsikan' : '', '']
     ], { colWidths: [3.2, 1.6, 2.0, 1.6], fontSize: DECK_CONFIG.TYPE.TABLE_CELL, headerSize: DECK_CONFIG.TYPE.TABLE_HEADER, rowHeight: 25, headerHeight: 36, numCols: [1, 2, 3] })
   });
 
@@ -684,17 +685,17 @@ function buildTopics(d) {
       { colWidths: [2.6, 1.5, 1.6, 1.4, 1.6], fontSize: DECK_CONFIG.TYPE.TABLE_CELL, headerSize: DECK_CONFIG.TYPE.TABLE_HEADER, rowHeight: 25, headerHeight: 36, numCols: [1, 2, 3, 4] })
   });
 
-  // --- Produktivitas per blok (file 10): janjang/pokok/tahun vs standar Marihat umur blok ---
+  // --- Produktivitas per blok (file 10): janjang/ha/tahun vs standar Marihat umur blok ---
   const BR = blockProdTableRows(d);
   if (BR) T.push({
     id: 'blokprod', title: 'Produktivitas per Blok',
-    visual: 'tabel blok prioritas (selisih janjang terbesar dari standar): blok, umur, luas, janjang/pokok/tahun realisasi / standar Marihat, capaian %, catatan penyebab (uji daun & tanah / rotasi panen / peremajaan)',
+    visual: 'tabel blok prioritas (selisih janjang terbesar dari standar): blok, umur, luas, janjang/ha/tahun realisasi / standar Marihat, capaian %, catatan penyebab (uji daun & tanah / rotasi panen / peremajaan)',
     facts: describeBlockProduction(d),
     fallback: (() => { const P = d.blockProd;
       return `${fmt(P.lowPct, 0)}% luas blok menghasilkan janjang di bawah ${fmt(DECK_CONFIG.THRESHOLDS.BLOCK_LOW_ACH * 100, 0)}% standar umurnya; ` +
         `${P.fertRows.length} blok rutin dipanen tetapi tetap rendah${P.fertRows.length ? ` (mis. ${P.fertRows.slice(0, 2).map(r => r.name).join(', ')})` : ''}, sehingga perlu uji daun dan uji tanah.` +
         (P.gapRpTotal ? ` Potensi yang belum tercapai sekitar ${fmtRp(P.gapRpTotal)} per tahun.` : ''); })(),
-    draw: b => drawTable(b, ['Blok', 'Umur\nth', 'Luas\nha', 'Jjg/pokok/th\nrealisasi / standar', 'Capaian', 'Catatan'], BR,
+    draw: b => drawTable(b, ['Blok', 'Umur\nth', 'Luas\nha', 'Jjg/ha/th\nrealisasi / standar', 'Capaian', 'Catatan'], BR,
       { colWidths: [1.4, 0.8, 0.9, 1.9, 1.1, 3.0], fontSize: DECK_CONFIG.TYPE.TABLE_CELL, headerSize: DECK_CONFIG.TYPE.TABLE_HEADER, rowHeight: 25, headerHeight: 36, numCols: [1, 2, 3, 4],
         cellColor: (r, c, txt) => (c === 4 ? (parseNum(txt) < DECK_CONFIG.THRESHOLDS.BLOCK_LOW_ACH * 100 ? DECK_CONFIG.COLOR.DANGER : null) : null) })
   });
@@ -1049,7 +1050,7 @@ const MAIN_SUMMARY = {
       rows: [
         { label: 'Produktivitas', unit: 'ton TBS/ha/tahun', cur: M.realTonHa, ref: M.pot.ton, f: v => fmt(v, 1), goodUp: true },
         { label: 'BJR', unit: 'kg per janjang', cur: M.realBjr, ref: M.pot.rbt, f: v => fmt(v, 1), goodUp: true },
-        { label: 'Janjang per pokok', unit: 'janjang/pokok/tahun', cur: M.realRjt, ref: M.pot.rjt, f: v => fmt(v, 1), goodUp: true },
+        { label: 'Janjang per ha', unit: 'janjang/ha/tahun', cur: M.realJjgHa, ref: M.pot.jjgHa, f: v => fmt(v, 0), goodUp: true },
         // produksi per blok tersedia: porsi luas blok yang memenuhi standar janjang (lebih bermakna dari kelengkapan data tanah)
         d.blockProd ? { label: 'Luas blok sesuai standar', unit: `% luas, janjang ≥ ${fmt(DECK_CONFIG.THRESHOLDS.BLOCK_LOW_ACH * 100, 0)}% standar`, cur: 100 - d.blockProd.lowPct, ref: 100, f: v => `${fmt(v, 0)}%`, goodUp: true }
           : S ? { label: 'Data jenis tanah', unit: '% luas blok tercatat', cur: S.knownPct, ref: 100, f: v => `${fmt(v, 0)}%`, goodUp: true } : null
@@ -1057,7 +1058,7 @@ const MAIN_SUMMARY = {
       // pesan pupuk didahulukan: indikasi kurang/kelebihan pupuk + ajakan uji daun & tanah
       caption: d.fertStatus && d.fertStatus.verdict !== 'sesuai' ? `${d.fertStatus.label}: ${d.fertStatus.reason}. ${STATUS_PUPUK_SARAN}.`
         : S && S.unknownHa ? `Jenis tanah ${fmt(S.unknownPct, 0)}% luas belum tercatat, sehingga dosis pupuk belum bisa disesuaikan dengan tanah.` : '',
-      desc: 'produktivitas, BJR, janjang per pokok, dan kelengkapan data tanah vs standar Marihat'
+      desc: 'produktivitas, BJR, janjang per ha, dan kelengkapan data tanah vs standar Marihat'
     };
     const y = seriesStats(d.yield), j = seriesStats(d.jjgHa), bj = seriesStats(d.bjr);
     if (!y) return null;
@@ -1128,8 +1129,8 @@ function dataHeadline(id, d) {
   const S = d.soil, FZ = d.fertilizer;
   const penyebab = () => {
     if (M && M.achTon < 0.9) {
-      if (M.achBjr && (!M.achRjt || M.achBjr <= M.achRjt)) return [`Hasil rendah: BJR ${fmt(M.realBjr, 1)} kg, ${pct(M.achBjr)} dari standar`, `Hasil rendah: BJR ${pct(M.achBjr)} dari standar`];
-      if (M.achRjt) return [`Hasil rendah: janjang per pokok ${pct(M.achRjt)} dari standar`, `Hasil rendah: janjang/pokok ${pct(M.achRjt)} standar`];
+      if (M.achBjr && (!M.achJjg || M.achBjr <= M.achJjg)) return [`Hasil rendah: BJR ${fmt(M.realBjr, 1)} kg, ${pct(M.achBjr)} dari standar`, `Hasil rendah: BJR ${pct(M.achBjr)} dari standar`];
+      if (M.achJjg) return [`Hasil rendah: janjang per ha ${pct(M.achJjg)} dari standar`, `Hasil rendah: janjang/ha ${pct(M.achJjg)} standar`];
     }
     if (M) return [`Hasil ${pct(M.achTon)} dari standar Marihat`];
     return null;
@@ -1156,19 +1157,22 @@ function dataHeadline(id, d) {
     tanpaberat: () => (N && N.nwSum ? [`${fmt(N.share, 0)}% janjang terjual tanpa catatan berat`] : null),
     blokunsale: () => (U && U.chronic.length ? [`${U.chronic.length} blok dipanen tanpa penjualan tercatat`] : null),
     m_penyebab: penyebab,
-    marihat: () => (M ? [`Hasil baru ${pct(M.achTon)} dari standar Marihat`] : null),
+    marihat: () => (!M ? null : M.nMonths < T.MIN_MONTHS_ANNUAL ? [`Hasil ${pct(M.achTon)} dari standar (data ${M.nMonths} bulan)`]
+      : [`Hasil baru ${pct(M.achTon)} dari standar Marihat`]),
     bjr: () => (M && M.achBjr ? [`BJR ${fmt(M.realBjr, 1)} kg, ${pct(M.achBjr)} dari standar umur`] : null),
     replanting: () => (B && B.replant.length ? [`${B.replant.length} blok (${fmt(B.replant.reduce((x, b) => x + b.ha, 0), 0)} ha) lewat umur ekonomis`] : null),
     blokprod: () => { const P = d.blockProd; if (!P) return null;
       if (P.fertRows.length) return [`${P.fertRows.length} blok rutin dipanen, janjang di bawah standar`, `${P.fertRows.length} blok janjang rendah, perlu uji daun`];
       if (P.lowPct >= 10) return [`${fmt(P.lowPct, 0)}% luas blok di bawah standar janjang`];
-      return P.best ? [`Blok ${P.best.name} paling produktif, ${fmt(P.best.rjt, 1)} jjg/pokok`] : null; },
+      return P.best ? [`Blok ${P.best.name} paling produktif, ${fmt(P.best.jjgHa, 0)} jjg/ha/th`] : null; },
     tanah: () => (!S ? null : S.unknownPct >= 50 ? [`${fmt(S.unknownPct, 0)}% luas belum ada data jenis tanah`, 'Jenis tanah sebagian besar belum tercatat']
       : S.dominant ? [`Tanah dominan ${S.dominant.name.toLowerCase()}, ${fmt(S.dominant.pct, 0)}% luas`, `Tanah dominan ${S.dominant.name.toLowerCase()}`] : null),
     pupuk: () => { const F2 = d.fertStatus; if (!F2) return null;
       const M2 = d.marihat, pc = v => `${fmt(v * 100, 0)}%`;
       if (F2.verdict === 'kurang') return (F2.doseVerdict === 'kurang' ? [`Indikasi kurang pupuk di ${fmt(d.npk.kurangHa, 0)} ha`]
-        : M2.achTon < 0.8 ? [`Indikasi kurang pupuk: hasil ${pc(M2.achTon)} dari standar`] : [`Indikasi kurang pupuk: BJR ${pc(M2.achBjr)} dari standar`]).concat(['Indikasi kurang pupuk, perlu uji daun']);
+        : M2 && M2.achTon < 0.8 && M2.nMonths >= T.MIN_MONTHS_ANNUAL ? [`Indikasi kurang pupuk: hasil ${pc(M2.achTon)} dari standar`]
+        : M2 && M2.achBjr && M2.achBjr < 0.85 ? [`Indikasi kurang pupuk: BJR ${pc(M2.achBjr)} dari standar`]
+        : [`Indikasi kurang pupuk di ${F2.priorityBlocks.length} blok rutin panen`]).concat(['Indikasi kurang pupuk, perlu uji daun']);
       if (F2.verdict === 'berlebih') return [`Indikasi kelebihan pupuk di ${fmt(d.npk.lebihHa, 0)} ha`, 'Indikasi kelebihan pupuk'];
       if (F2.verdict === 'sesuai') return ['Tidak ada indikasi kurang pupuk'];
       return ['Status pupuk perlu dicek lewat uji daun']; },

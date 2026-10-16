@@ -62,10 +62,10 @@ function cleanHeadline(text, where) {
 
 function tryUi() { try { return SpreadsheetApp.getUi(); } catch (e) { return null; } }
 
-/** Daftar sel jawaban (DECK_CONFIG.CLAUDE_INPUT.CELLS), mis. ['D1','D2','D3','F1']. */
-function claudeCells() { return (DECK_CONFIG.CLAUDE_INPUT.CELLS || ['D1', 'D2', 'D3', 'F1']).map(a => String(a).trim().toUpperCase()); }
+/** Daftar sel jawaban (DECK_CONFIG.CLAUDE_INPUT.CELLS), mis. ['D1','D2','D3','F1','F2','F3']. */
+function claudeCells() { return (DECK_CONFIG.CLAUDE_INPUT.CELLS || ['D1', 'D2', 'D3', 'F1', 'F2', 'F3']).map(a => String(a).trim().toUpperCase()); }
 
-/** Alamat sel jawaban ke-i: 0 = D1, 1 = D2, 2 = D3, 3 = F1 (urutan di CLAUDE_INPUT.CELLS). */
+/** Alamat sel jawaban ke-i: 0 = D1, 1 = D2, 2 = D3, 3 = F1, 4 = F2, 5 = F3 (urutan di CLAUDE_INPUT.CELLS). */
 function claudeCellA1(i) {
   const cells = claudeCells();
   return cells[i] || `(sel ke-${i + 1} belum diatur)`;

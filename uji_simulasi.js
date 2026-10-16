@@ -86,7 +86,7 @@ function buildTopics(d) {
 `, 'stub2.js');
 
 // --- sheet palsu ---
-// Sheet tiruan: baris 1–3 Title/Period/Lokasi (sel jawaban D1–D3 dan F1), baris 4 = header tabel (D4 = luas panen), baris 5 = target
+// Sheet tiruan: baris 1–3 Title/Period/Lokasi (sel jawaban D1–D3 dan F1–F3), baris 4 = header tabel (D4 = luas panen), baris 5 = target
 const grid = disp => { const g = [];
   for (let r = 0; r < 5; r++) {
     if (r === 3) g.push(['year_month', 'ton/ha', 'jjg/ha', 'luas panen', 'hargajual/kg', 'total_janjang']);
@@ -231,12 +231,22 @@ ok(res.ai === null && CAPTURED && /belum berisi/.test(CAPTURED[1]), 'D1 kosong d
 cells.D1 = 'Catatan biasa'; res = run('readAnswerBlocks(sheet)');
 ok(res.blocks.length === 0, 'sel D berisi teks biasa tidak dianggap jawaban');
 // 8b. Sel jawaban = D1, D2, D3, F1 (D4 adalah header tabel); blok ke-4 dibaca dari F1 dan disembunyikan dari pembaca data
-ok(run('claudeCells().join()') === 'D1,D2,D3,F1' && run('claudeCellA1(3)') === 'F1', 'sel jawaban: D1, D2, D3, F1 (bukan D4 yang berisi header tabel)');
+ok(run('claudeCells().join()') === 'D1,D2,D3,F1,F2,F3' && run('claudeCellA1(3)') === 'F1' && run('claudeCellA1(5)') === 'F3', 'sel jawaban: D1, D2, D3, F1, lalu F2, F3 (bukan D4 yang berisi header tabel)');
 for (const k of Object.keys(cells)) delete cells[k];
 setAnswer(packet.id); cells.F1 = JSON.stringify({ packet_id: packet.id, slides: [] });
 res = run('readAnswerBlocks(sheet)'); run('loadSheetData(sheet)');
 ok(res.blocks.map(b => b.a1).join() === 'D1,D2,D3,F1' && GRID().v === '' && run('maskAiCells([["Title","x","",cells0.D1,"",cells0.F1]])[0][5]') === '',
   'F1 terbaca sebagai blok ke-4 dan ikut disembunyikan dari pembaca data');
+// 8c. Slide lebih banyak -> F2 dan F3 ikut dipakai, dibaca berurutan, dan disembunyikan dari pembaca data
+const bigPlan = Object.assign({}, plan, { appendix: plan.appendix.concat(plan.appendix, plan.appendix.slice(0, 7)).map((t, i) => Object.assign({}, t, { id: t.id + '_' + i })) });
+ctx.bigPlan = bigPlan;
+const bigPk = run('buildClaudePacket(data, bigPlan)');
+ok(bigPk.cells.join() === 'D1,D2,D3,F1,F2,F3' && /Sel F3 \(blok SLIDE 5\/5\)/.test(bigPk.text) && !/hanya .* sel/.test(run('RUN_WARNINGS').join(' ')),
+  `${bigPlan.appendix.length} slide lampiran -> sel ${bigPk.cells.join(', ')} tanpa peringatan sel kurang`);
+cells.F2 = JSON.stringify({ packet_id: packet.id, slides: [] }); cells.F3 = JSON.stringify({ packet_id: packet.id, slides: [] });
+res = run('readAnswerBlocks(sheet)');
+ok(res.blocks.map(b => b.a1).join() === 'D1,D2,D3,F1,F2,F3' && run('JSON.stringify(maskAiCells([["T","x","",cells0.D1,"",cells0.F1],["P","x","",cells0.D2,"",cells0.F2],["L","x","",cells0.D3,"",cells0.F3]]).map(r => r[3] + r[5]))') === '["","",""]',
+  'F2 dan F3 terbaca sebagai blok ke-5 dan ke-6 dan ikut disembunyikan dari pembaca data');
 // 9. Grafik kesimpulan slide utama (bulan laporan vs pembanding), dengan data tiruan
 const sumK = run(`MAIN_SUMMARY.m_kinerja({ produksiActual: true, produksi: [{p:{y:2026,m:7},value:210},{p:{y:2026,m:8},value:234.8}],
   revenueTotal: [{p:{y:2026,m:7},value:2.1e8},{p:{y:2026,m:8},value:2.75e8}], costTotal: [{p:{y:2026,m:7},value:3.0e7},{p:{y:2026,m:8},value:3.6e7}],
@@ -330,7 +340,7 @@ ok(/^Status Pemupukan Kebun\|/.test(np2) && /STATUS PEMUPUKAN \(PESAN UTAMA/.tes
   `lampiran Status Pemupukan: ${FS2.label} (${FS2.reason}); bukti: ${FS2.evidence.map(e => e.indikator).join(', ')}`);
 // Status pemupukan dari data tiruan: kurang (hasil rendah), berlebih (dosis aktual), tidak ada indikasi, belum dapat dinilai
 const st = obj => { ctx2.dS = obj; return run2('buildFertilizerStatus(dS)'); };
-const Mlow = { achTon: 0.29, achBjr: 0.55, achRjt: 0.6, realTonHa: 8.1, pot: { ton: 28, rbt: 20, rjt: 10 }, realBjr: 11, realRjt: 6, cls: 'S3' };
+const Mlow = { nMonths: 12, achTon: 0.29, achBjr: 0.55, achJjg: 0.6, realTonHa: 8.1, pot: { ton: 28, rbt: 20, rjt: 10 }, realBjr: 11, realRjt: 6, cls: 'S3' };
 const Mok = Object.assign({}, Mlow, { achTon: 0.95, achBjr: 0.97, achRjt: 0.95 });
 const base = { hargaJual: [], revKg: [], upkeep: { headers: ['activity_group', 'total_upkeep_cost'], rows: [['Pemupukan', '25000000'], ['Panen', '10000000']] } };
 const sK = st(Object.assign({}, base, { marihat: Mlow })), sOk = st(Object.assign({}, base, { marihat: Mok })), sB = st(Object.assign({}, base, {}));
@@ -344,6 +354,13 @@ ok(r23.product.map(x => x.name).join() === 'Uji Tanah Dokter Sawit,Uji Daun Dokt
 ctx2.dS = Object.assign({}, D2, { fertStatus: sK, marihat: Mlow });
 ok(/^Indikasi kurang pupuk: hasil 29% dari standar$/.test(run2('dataHeadline("pupuk", dS)')) && /Indikasi kurang pupuk/.test(run2('MAIN_SUMMARY.m_penyebab(dS).caption')) && /Uji Daun/.test(run2('MAIN_SUMMARY.m_penyebab(dS).caption')),
   `judul "${run2('dataHeadline("pupuk", dS)')}" dan keterangan slide Penyebab memuat status pupuk + ajakan uji`);
+// Data < 3 bulan: produktivitas disetahunkan hanya indikatif (tidak jadi dasar status), BJR tetap berlaku
+const sShort = st(Object.assign({}, base, { marihat: Object.assign({}, Mlow, { nMonths: 1, achBjr: 0.95 }) }));
+const sShortB = st(Object.assign({}, base, { marihat: Object.assign({}, Mlow, { nMonths: 1 }) }));
+ok(sShort.verdict === 'belum' && /indikatif/.test(sShort.evidence[0].arti) && sShortB.verdict === 'kurang' && /^BJR 55%/.test(sShortB.reason),
+  `data 1 bulan: hasil rendah saja -> "${sShort.label}"; dengan BJR rendah -> "${sShortB.label}" (${sShortB.reason})`);
+ctx2.dS = Object.assign({}, D2, { fertStatus: Object.assign({}, sK, { priorityBlocks: ['A1', 'B3'] }), marihat: Object.assign({}, Mok) });
+ok(run2('dataHeadline("pupuk", dS)') === 'Indikasi kurang pupuk di 2 blok rutin panen', `status kurang dari bukti blok saja -> judul "${run2('dataHeadline("pupuk", dS)')}" (bukan BJR)`);
 ok(rc2.indexOf('R24') >= 0 && /di atas acuan/.test(run2('detectRecommendations(D2, P2.topics, detectAnomalies(P2.topics, D2))').find(r => r.code === 'R24').evidence), 'R24 hanya bila dosis aktual menyimpang (di atas prediksi)');
 // Tabel sheet "pupuk" dibaca langsung bila ada (mengganti tabel bawaan), lalu kembalikan tabel bawaan
 const pupukGrid = [['Keperluan Hara untuk Vegetative Growth Berdasarkan Umur Tanaman', '', '', '', ''], ['Age', 'N', 'P2O5', 'K2O', 'MgO'], ['', '', '', '', ''],
@@ -361,8 +378,8 @@ ok(pb[0].jjg === 342 && pb[0].soil === null && pb[1].jjg === null && pb[2].soil 
 const BP = D2.blockProd, rowB = n => BP.rows.find(r => r.name === n);
 ok(BP && rowB('A1').cat === 'hara' && rowB('A2').cat === 'tua' && rowB('B1').cat === 'rotasi' && rowB('B2').cat === 'rotasi' && rowB('Robert C').cat === 'baik' && !BP.mismatchMonths.length,
   `penyebab blok rendah dipisahkan: A1 ${(rowB('A1').ach * 100).toFixed(0)}% standar & rutin dipanen (hara), B1 dipanen ${rowB('B1').harvestMonths}/${BP.nMonths} bln (rotasi), A2 umur ${rowB('A2').age} th (peremajaan)`);
-ok(Math.abs(rowB('A1').rjt - 300 * 12 / (20 * 143)) < 1e-9 && rowB('A1').std.rjt === 6.1 && BP.fertRows.map(r => r.name).join() === 'A1' && BP.gapJjgTotal > 0 && BP.pareto.blocks >= 1,
-  `janjang/pokok/tahun per blok vs standar Marihat; potensi belum tercapai ±${Math.round(BP.gapJjgTotal)} jjg/th`);
+ok(Math.abs(rowB('A1').jjgHa - 300 * 12 / 20) < 1e-9 && Math.abs(rowB('A1').std.jjgHa - 24000 / 29.8) < 1e-9 && rowB('A1').rjt === null && BP.fertRows.map(r => r.name).join() === 'A1' && BP.gapJjgTotal > 0 && BP.pareto.blocks >= 1,
+  `janjang/ha/tahun per blok vs standar Marihat (ton ÷ BJR standar, tanpa asumsi pokok/ha); potensi belum tercapai ±${Math.round(BP.gapJjgTotal)} jjg/th`);
 // Blok dengan janjang/pokok tak wajar (>200% standar) dikeluarkan dari analisis; catatan blok di atas ambang tapi <100% tidak disebut "sesuai"
 const bpS = run2(`(function(){ const r = D2.blocks.blocks.find(b => b.name === 'Robert C'), ha = r.ha; r.ha = ha / 20;
   const P = buildBlockProduction(D2); D2.__txt = describeBlockProduction(Object.assign({}, D2, { blockProd: P })); r.ha = ha; return P; })()`);
@@ -371,6 +388,10 @@ ok(rcS.cat === 'cek' && bpS.suspectRows.length === 1 && bpS.best.name !== 'Rober
   `blok >200% standar (Robert C ${Math.round(rcS.ach * 100)}%) ditandai "cek luas/nama blok", tidak jadi blok terbaik`);
 ok(run2(`blockNote({ cat: 'baik', ach: 0.69 })`) === 'di bawah standar, masih di atas ambang 60%' && run2(`blockNote({ cat: 'baik', ach: 1.1 })`) === 'sesuai atau di atas standar',
   'catatan blok 69% standar tidak lagi disebut "sesuai standar"');
+const bpShort = run2(`(function(){ const T = DECK_CONFIG.THRESHOLDS, old = T.MIN_MONTHS_ANNUAL; T.MIN_MONTHS_ANNUAL = 99;
+  const P = buildBlockProduction(D2); D2.__txtS = describeBlockProduction(Object.assign({}, D2, { blockProd: P })); T.MIN_MONTHS_ANNUAL = old; return P; })()`);
+ok(bpShort.shortData && !bpShort.fertRows.length && bpShort.rows.find(r => r.name === 'A1').cat === 'pantau' && bpShort.rows.find(r => r.name === 'A2').cat === 'tua' && /INDIKATIF/.test(D2.__txtS),
+  'data blok terlalu pendek: blok rendah "pantau" (penyebab belum disimpulkan), tidak ada blok prioritas pupuk, catatan indikatif');
 const FS3 = D2.fertStatus;
 const blokEv = F => F.evidence.find(e => e.indikator === 'Blok janjang rendah');
 ctx2.dW = Object.assign({}, D2, { blockProd: Object.assign({}, D2.blockProd, { fertPct: 35 }) });

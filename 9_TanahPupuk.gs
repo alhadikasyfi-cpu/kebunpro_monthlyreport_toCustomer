@@ -376,15 +376,18 @@ const STATUS_PUPUK_SARAN = 'Pastikan dengan Uji Daun dan Uji Tanah Dokter Sawit'
 function buildFertilizerStatus(d) {
   const M = d.marihat, N = d.npk, S = d.soil, ev = [];
   const pct = v => `${fmt(v * 100, 0)}%`;
+  // Produktivitas per tahun dari < 3 bulan data dipengaruhi musim panen -> hanya pendukung, bukan dasar kesimpulan
+  const shortM = !!(M && M.nMonths < DECK_CONFIG.THRESHOLDS.MIN_MONTHS_ANNUAL);
   // 1. Hasil vs standar Marihat untuk umur yang sama (kurang hara adalah salah satu penyebab umum hasil rendah)
   if (M) {
     ev.push({ indikator: 'Produktivitas', kebun: `${fmt(M.realTonHa, 1)} ton/ha/th`, acuan: `${fmt(M.pot.ton, 1)} (Marihat ${M.cls})`,
-      arti: M.achTon < 0.8 ? `${pct(M.achTon)} dari potensi; kurang hara salah satu penyebab umum` : `${pct(M.achTon)} dari potensi`,
-      arah: M.achTon < 0.8 ? 'kurang' : 'netral' });
+      arti: (M.achTon < 0.8 ? `${pct(M.achTon)} dari potensi; kurang hara salah satu penyebab umum` : `${pct(M.achTon)} dari potensi`) +
+        (shortM ? `; baru ${M.nMonths} bulan data, masih indikatif` : ''),
+      arah: M.achTon < 0.8 && !shortM ? 'kurang' : 'netral' });
     if (M.achBjr) ev.push({ indikator: 'BJR', kebun: `${fmt(M.realBjr, 1)} kg`, acuan: `${fmt(M.pot.rbt, 1)} kg`,
       arti: M.achBjr < 0.85 ? 'tandan ringan; sering terkait kurang K dan Mg' : 'berat tandan wajar', arah: M.achBjr < 0.85 ? 'kurang' : 'netral' });
-    if (M.achRjt) ev.push({ indikator: 'Janjang per pokok', kebun: `${fmt(M.realRjt, 1)}/tahun`, acuan: `${fmt(M.pot.rjt, 1)}/tahun`,
-      arti: M.achRjt < 0.8 ? 'tandan sedikit; terkait N dan K (juga rotasi panen)' : 'jumlah tandan wajar', arah: M.achRjt < 0.8 ? 'kurang' : 'netral' });
+    if (M.achJjg) ev.push({ indikator: 'Janjang per ha', kebun: `${fmt(M.realJjgHa, 0)}/tahun`, acuan: `${fmt(M.pot.jjgHa, 0)}/tahun`,
+      arti: M.achJjg < 0.8 ? 'tandan sedikit; terkait N dan K (juga rotasi panen)' : 'jumlah tandan wajar', arah: M.achJjg < 0.8 ? 'kurang' : 'netral' });
   }
   // 2. Dosis NPK aktual vs prediksi (bila diisi di sheet)
   let doseVerdict = null;
@@ -406,11 +409,11 @@ function buildFertilizerStatus(d) {
     ev.push({ indikator: 'Pemupukan tercatat', kebun: ada ? [fertUpkeep.length ? fmtRpShort(fertUpkeep.reduce((a, x) => a + x.value, 0)) : '', fertDays ? `${fertDays} catatan mandor` : ''].filter(Boolean).join(', ') : 'tidak tercatat',
       acuan: '2–3 kali/tahun', arti: ada ? 'ada catatan pemupukan' : 'belum terlihat di catatan KebunPRO', arah: ada ? 'netral' : 'kurang' });
   }
-  // 3b. Produksi per blok (file 10): blok yang RUTIN dipanen tetapi janjang/pokok jauh di bawah standar umurnya
+  // 3b. Produksi per blok (file 10): blok yang RUTIN dipanen tetapi janjang/ha jauh di bawah standar umurnya
   const P = d.blockProd, T = DECK_CONFIG.THRESHOLDS;
   const blockLow = !!(P && P.fertPct / 100 >= T.BLOCK_LOW_AREA);
   if (P && P.ratedHa) ev.push({ indikator: 'Blok janjang rendah', kebun: `${P.fertRows.length} blok (${fmt(P.fertPct, 0)}% luas)`,
-    acuan: `≥ ${pct(T.BLOCK_LOW_ACH)} standar`, arti: P.fertRows.length ? `rutin dipanen tetapi janjang/pokok rendah, mis. ${P.fertRows.slice(0, 3).map(r => r.name).join(', ')}` : 'tidak ada blok rutin dipanen yang jauh di bawah standar',
+    acuan: `≥ ${pct(T.BLOCK_LOW_ACH)} standar`, arti: P.fertRows.length ? `rutin dipanen tetapi janjang/ha rendah, mis. ${P.fertRows.slice(0, 3).map(r => r.name).join(', ')}` : 'tidak ada blok rutin dipanen yang jauh di bawah standar',
     arah: blockLow ? 'kurang' : 'netral' });
   // 4. Jenis tanah (menentukan kebutuhan khusus; tanpa data tanah dosis belum bisa disesuaikan)
   if (S) {
@@ -418,13 +421,13 @@ function buildFertilizerStatus(d) {
     if (gb) ev.push({ indikator: 'Jenis tanah', kebun: `Gambut ${fmt(gb.ha, 0)} ha`, acuan: '-', arti: 'butuh K lebih serta Cu dan Zn', arah: 'netral' });
     else if (S.unknownPct >= 50) ev.push({ indikator: 'Jenis tanah', kebun: `${fmt(S.unknownPct, 0)}% belum tercatat`, acuan: '-', arti: 'dosis belum bisa disesuaikan dengan tanah', arah: 'netral' });
   }
-  const yieldLow = M && (M.achTon < 0.8 || (M.achBjr && M.achBjr < 0.85));
+  const yieldLow = M && ((M.achTon < 0.8 && !shortM) || (M.achBjr && M.achBjr < 0.85));
   const verdict = doseVerdict && doseVerdict !== 'sesuai' ? doseVerdict
     : yieldLow || blockLow ? 'kurang'
-    : doseVerdict === 'sesuai' || (M && M.achTon >= 0.8) ? 'sesuai' : 'belum';
+    : doseVerdict === 'sesuai' || (M && M.achTon >= 0.8 && !shortM) ? 'sesuai' : 'belum';
   const reason = verdict === 'kurang'
     ? (doseVerdict === 'kurang' ? `dosis NPK ${fmt(N.actual, 1)} kg/pohon/tahun di bawah prediksi untuk ${fmt(N.kurangHa, 0)} ha`
-      : M && M.achTon < 0.8 ? `hasil ${pct(M.achTon)} dari standar Marihat${M.achBjr && M.achBjr < 0.85 ? ` dan BJR ${pct(M.achBjr)} dari standar` : ''}`
+      : M && M.achTon < 0.8 && !shortM ? `hasil ${pct(M.achTon)} dari standar Marihat${M.achBjr && M.achBjr < 0.85 ? ` dan BJR ${pct(M.achBjr)} dari standar` : ''}`
       : M && M.achBjr && M.achBjr < 0.85 ? `BJR ${pct(M.achBjr)} dari standar Marihat untuk umurnya`
       : `${P.fertRows.length} blok (${fmt(P.fertPct, 0)}% luas) rutin dipanen tetapi janjangnya di bawah ${pct(T.BLOCK_LOW_ACH)} standar`)
     : verdict === 'berlebih' ? `dosis NPK ${fmt(N.actual, 1)} kg/pohon/tahun di atas prediksi untuk ${fmt(N.lebihHa, 0)} ha`

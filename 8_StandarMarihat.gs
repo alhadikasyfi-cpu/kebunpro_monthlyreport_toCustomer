@@ -8,6 +8,10 @@
  *   ton = produktivitas TBS (ton/ha/tahun)
  *   rjt = rerata jumlah tandan (tandan/pohon/tahun)
  *   rbt = rerata berat tandan / BJR (kg/tandan)
+ *   jjgHa = janjang/ha/tahun = ton × 1000 ÷ rbt (diturunkan dari tabel; tidak butuh jumlah pokok kebun).
+ *   Tabel ini sendiri setara ±132 pokok produktif/ha (ton ÷ (rjt × rbt) = 132 di semua umur dan kelas),
+ *   lebih rendah dari kerapatan tanam 143 pokok/ha (jarak 9 m segitiga), karena tidak semua pokok produktif.
+ *   Karena jumlah pokok kebun jarang tercatat, perbandingan jumlah tandan memakai janjang/ha, bukan janjang/pokok.
  * Potensi ini berlaku untuk bahan tanam unggul D×P. Pedoman yang sama menyebut bahan tanam tidak unggul
  * hanya mencapai produksi TBS maksimum sekitar 50%.
  */
@@ -44,7 +48,7 @@ function marihatAt(age, cls) {
   if (age === null || age === undefined || age < 3) return null;
   const row = MARIHAT[Math.min(25, Math.round(age))];
   const v = row && row[cls || 'S3'];
-  return v ? { ton: v[0], rjt: v[1], rbt: v[2] } : null;
+  return v ? { ton: v[0], rjt: v[1], rbt: v[2], jjgHa: (v[0] * 1000) / v[2] } : null;
 }
 
 /**
@@ -61,7 +65,7 @@ function buildMarihat(d) {
   const areaKnown = known.reduce((s, b) => s + b.ha, 0);
   if (!areaKnown) return null;
   const wavg = (c, k) => known.reduce((s, b) => s + b.ha * marihatAt(b.age, c)[k], 0) / areaKnown;
-  const pot = { ton: wavg(cls, 'ton'), rjt: wavg(cls, 'rjt'), rbt: wavg(cls, 'rbt') };
+  const pot = { ton: wavg(cls, 'ton'), rjt: wavg(cls, 'rjt'), rbt: wavg(cls, 'rbt'), jjgHa: wavg(cls, 'jjgHa') };
   const potS1 = wavg('S1', 'ton');
 
   // Realisasi (bulan penuh saja; bulan awal yang belum penuh dikecualikan)
@@ -83,7 +87,9 @@ function buildMarihat(d) {
   const realTonHa = realTonYear / area;
   const realBjr = usePanen ? d.bjrSoldCum : (jjgSum ? (tonSum * 1000) / jjgSum : null);
   const soldTonYear = (() => { const t = full(d.produksi); return t.length ? (t.reduce((a, x) => a + x.value, 0) / t.length) * 12 : null; })();
-  const realRjt = jjgSum && d.sph ? ((jjgSum / jjg.length) * 12) / (area * d.sph) : null;
+  // Jumlah tandan dibandingkan per hektare (pasti dari data); per pokok hanya bila jumlah pokok/ha dicatat di sheet.
+  const realJjgHa = jjgSum ? ((jjgSum / jjg.length) * 12) / area : null;
+  const realRjt = realJjgHa && d.sph && !d.sphAssumed ? realJjgHa / d.sph : null;
   const potTonYear = pot.ton * area;
   const priceS = seriesStats(d.hargaJual.length ? d.hargaJual : d.revKg);
   const avgPrice = priceS ? priceS.avg : null;
@@ -99,8 +105,8 @@ function buildMarihat(d) {
 
   return {
     cls, area, areaKnown, areaFromBlocks, nMonths, annualized: nMonths < 12, usePanen, soldTonYear,
-    pot, potS1, realTonHa, realTonYear, potTonYear, realBjr, realRjt,
-    achTon: realTonHa / pot.ton, achBjr: realBjr ? realBjr / pot.rbt : null, achRjt: realRjt ? realRjt / pot.rjt : null,
+    pot, potS1, realTonHa, realTonYear, potTonYear, realBjr, realRjt, realJjgHa,
+    achTon: realTonHa / pot.ton, achBjr: realBjr ? realBjr / pot.rbt : null, achJjg: realJjgHa ? realJjgHa / pot.jjgHa : null, achRjt: realRjt ? realRjt / pot.rjt : null,
     gapTon, gapRp: avgPrice ? gapTon * 1000 * avgPrice : null, avgPrice, byClass
   };
 }
@@ -115,11 +121,13 @@ function describeMarihat(d) {
     M.usePanen ? `- Dasar realisasi: estimasi produksi panen = janjang dipanen × BJR berbasis janjang terjual (${fmt(M.realBjr, 1)} kg), karena tonase di sheet adalah ton TERJUAL. TBS terjual setahun ${fmt(M.soldTonYear, 0)} ton.` : '',
     `- Realisasi produktivitas: ${fmt(M.realTonHa, 1)} ton TBS/ha/tahun (${M.annualized ? `disetahunkan dari ${M.nMonths} bulan` : `${M.nMonths} bulan`}) vs potensi ${fmt(M.pot.ton, 1)} ton/ha/tahun → pencapaian ${fmtPct(M.achTon * 100, 0)} (potensi kelas S1: ${fmt(M.potS1, 1)}).`,
     `- BJR realisasi (${M.usePanen ? 'tonase terjual ÷ janjang terjual' : 'tonase ÷ janjang'}): ${fmt(M.realBjr, 1)} kg vs standar ${fmt(M.pot.rbt, 1)} kg → ${M.achBjr ? fmtPct(M.achBjr * 100, 0) : '-'}.`,
-    M.realRjt ? `- Janjang per pokok per tahun: ${fmt(M.realRjt, 1)} vs standar ${fmt(M.pot.rjt, 1)} → ${fmtPct(M.achRjt * 100, 0)} (asumsi ${d.sph} pokok/ha${d.sphAssumed ? ', tidak dicatat di sheet' : ''}).` : '',
+    M.realJjgHa ? `- Janjang per hektare per tahun: ${fmt(M.realJjgHa, 0)} vs standar ${fmt(M.pot.jjgHa, 0)} → ${fmtPct(M.achJjg * 100, 0)} (produktivitas = jumlah janjang/ha × BJR, jadi kekurangan hasil bisa dipilah: tandan sedikit atau tandan ringan).` : '',
+    M.realRjt ? `- Janjang per pokok per tahun: ${fmt(M.realRjt, 1)} vs standar ${fmt(M.pot.rjt, 1)} → ${fmtPct(M.achRjt * 100, 0)} (${d.sph} pokok/ha tercatat di sheet).` : '',
     `- Produksi setahun: realisasi ${fmt(M.realTonYear, 0)} ton vs potensi ${fmt(M.potTonYear, 0)} ton; selisih ${fmt(M.gapTon, 0)} ton${M.gapRp ? ` ≈ ${fmtRp(M.gapRp)} per tahun pada harga rata-rata Rp${fmt(M.avgPrice, 0)}/kg` : ''}.`,
     `- Potensi per kelas umur: ${M.byClass.map(c => `${c.name} ${fmt(c.ha, 1)} ha → ${fmt(c.ton, 1)} t/ha/th, BJR ${fmt(c.rbt, 1)} kg`).join('; ')}.`,
     '- Catatan: potensi Marihat berlaku untuk bibit unggul D×P dengan pemeliharaan standar; bibit tidak unggul menurut pedoman yang sama hanya mencapai sekitar 50% potensi. Yield bulanan di sheet memakai luas panen sebagai pembagi, sedangkan perbandingan ini memakai luas blok.'
   ].filter(Boolean);
+  if (M.nMonths < DECK_CONFIG.THRESHOLDS.MIN_MONTHS_ANNUAL) L.push(`CATATAN: realisasi baru ${M.nMonths} bulan penuh; angka per tahun disetahunkan dan dipengaruhi musim panen, jadi masih INDIKATIF. Jangan menyimpulkan pencapaian dari angka ini saja.`);
   if (M.achTon > 1.2) L.push(`PERLU DICEK: produktivitas ${fmtPct(M.achTon * 100, 0)} dari standar Marihat (di atas potensi); periksa luas blok, tahun tanam, atau kelas lahan yang dipakai.`);
   if (M.achTon < 0.5) L.push(`PERLU DICEK: produktivitas baru ${fmtPct(M.achTon * 100, 0)} dari standar Marihat untuk umur tanamannya (${fmt(M.realTonHa, 1)} vs ${fmt(M.pot.ton, 1)} t/ha/th); potensi tambahan sekitar ${fmt(M.gapTon, 0)} ton per tahun.`);
   return L.join('\n');

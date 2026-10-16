@@ -37,8 +37,9 @@ const DECK_CONFIG = {
   // Menu "1. Salin Paket Data untuk Claude" menampilkan sel mana saja yang harus diisi.
   CLAUDE_INPUT: {
     // Sel jawaban berurutan. Harus sel KOSONG di luar tabel data: baris 4 adalah header tabel (D4 = luas panen),
-    // jadi dipakai D1–D3 (di samping Title/Period/Lokasi) lalu F1. Tambah sel lain di sini bila butuh lebih banyak blok.
-    CELLS: ['D1', 'D2', 'D3', 'F1'],
+    // jadi dipakai D1–D3 (di samping Title/Period/Lokasi), lalu F1. Bila slide lebih banyak, F2 lalu F3 ikut dipakai
+    // (hanya sel yang dibutuhkan yang diisi). Tambah sel kosong lain di sini bila butuh lebih banyak blok.
+    CELLS: ['D1', 'D2', 'D3', 'F1', 'F2', 'F3'],
     SLIDES_PER_BLOCK: 12   // maksimal slide lampiran per sel (menjaga tiap sel jauh di bawah batas 50.000 karakter Sheets)
   },
 
@@ -120,7 +121,9 @@ const DECK_CONFIG = {
     REPEAT_SAME_MIN: 3,         // nilai persis sama ≥ 3 bulan berturut-turut -> kemungkinan isian tetap
     BLOCK_LOW_ACH: 0.6,         // janjang/pokok/tahun blok < 60% standar Marihat umurnya -> blok berproduktivitas rendah
     BLOCK_REGULAR: 0.7,         // blok dipanen ≥ 70% bulan periode = panen teratur (rendahnya bukan karena rotasi)
-    BLOCK_SUSPECT_ACH: 2.0,     // janjang/pokok > 200% standar -> kemungkinan salah luas/nama blok, dikeluarkan dari analisis blok
+    BLOCK_VERY_LOW_ACH: 0.1,    // janjang/ha < 10% standar -> selain penyebab di lapangan, luas blok juga perlu dicek
+    MIN_MONTHS_ANNUAL: 3,       // < 3 bulan data: angka per tahun hanya indikatif (musim panen), penyebab blok rendah belum disimpulkan
+    BLOCK_SUSPECT_ACH: 2.0,     // janjang/ha > 200% standar -> kemungkinan salah luas/nama blok, dikeluarkan dari analisis blok
     BLOCK_LOW_AREA: 0.3         // ≥ 30% luas blok berproduktivitas rendah -> ikut menjadi bukti indikasi kurang pupuk
   },
 
@@ -136,7 +139,8 @@ const DECK_CONFIG = {
   // Standar Marihat: kelas kesesuaian lahan bila sheet tidak punya label "Kelas Lahan" (S1 / S2 / S3).
   // S3 dipakai sebagai default karena paling konservatif (potensi terendah).
   DEFAULT_LAND_CLASS: 'S3',
-  // Kerapatan tanam (pokok/ha) bila sheet tidak punya label "SPH"; dipakai untuk janjang per pokok.
+  // Kerapatan tanam (pokok/ha) bila sheet tidak punya label "SPH": 143 = jarak tanam standar 9 m segitiga sama sisi
+  // (10.000 ÷ (0,866 × 9²)). Hanya dipakai untuk total kebutuhan pupuk dan hara per pokok; produktivitas dibandingkan per ha.
   SPH_DEFAULT: 143,
 
   // Aset gambar design system SawitPRO CBR (dipakai saat "Siapkan Template").
