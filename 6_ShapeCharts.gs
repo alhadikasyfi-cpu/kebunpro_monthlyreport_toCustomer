@@ -545,6 +545,12 @@ function drawFlowFunnel(b, F) {
       y += gapH;
     }
   });
+  // Corong bulanan: selisih bulan ini belum tentu hilang (bisa terjual bulan depan); kerugian = sisa panen lama yang tertahan
+  if (F.pendingJjg !== undefined && !F.overSold) {
+    const t = `Selisih bulan ini belum tentu hilang (bisa terjual bulan depan). Panen bulan sebelumnya yang masih tertahan: ${fmt(F.lossJjg, 0)} jjg` +
+      (F.lossRp ? ` ≈ ${fmtRpShort(F.lossRp)}` : '') + '.';
+    b.text(t, A.left, Math.min(y + 4, A.top + A.height - 16), A.width, 16, { align: 'START', valign: 'TOP', size: 8.4, color: F.lossJjg ? C.DANGER : C.MUTED, weight: DECK_CONFIG.WEIGHT.HEAVY });
+  }
 }
 
 /* ------------------------------------------------------------------------- */

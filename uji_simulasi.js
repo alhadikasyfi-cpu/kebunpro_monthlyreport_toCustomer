@@ -166,7 +166,7 @@ ok(kp[0].note === 'Target 250 ton · tercapai 94%' && kp[0].tone === 'neutral', 
 ok(/vs rata-rata 2 bulan/.test(kp[1].note) && kp[1].tone === 'good', 'yield vs rata-rata periode');
 ok(kp[2].name === 'BJR Sep 26' && /▼ 4% vs rata-rata 2 bulan \(6,7 kg\)/.test(kp[2].note) && kp[2].tone === 'bad', 'BJR bulan laporan vs rata-rata periode (tanpa target)');
 ok(/▲ 31% vs Agu 26/.test(kp[3].note), 'pendapatan vs bulan lalu');
-ok(kp[5].name === 'Kerugian janjang Sep 26' && kp[5].value === '60,0' && /20% hilang · ▲ 50% vs Agu 26/.test(kp[5].note) && kp[5].tone === 'bad', 'kebocoran BULAN LAPORAN (bukan kumulatif) vs bulan lalu');
+ok(kp[5].name === 'Kerugian janjang Sep 26' && kp[5].value === '60,0' && /1\.500 jjg tertahan >1 bln · ▲ 50% vs Agu 26/.test(kp[5].note) && kp[5].tone === 'bad', 'kebocoran BULAN LAPORAN (bukan kumulatif) vs bulan lalu');
 run('kd.targets = { tbs: null, yield: null, bjr: null, revenue: null }');
 const kn = run('computeOwnerKpis(kd)');
 console.log(kn.slice(0, 4).map(k => `   ${k.name}: ${k.value} ${k.unit} | ${k.note} [${k.tone}]`).join('\n'));
@@ -303,8 +303,23 @@ ok(D2.soil && D2.soil.groups.map(g => g.name).join() === 'Gambut,Podsolik Merah 
   `jenis tanah: ${D2.soil && D2.soil.groups.map(g => `${g.name} ${g.ha} ha`).join(', ')}`);
 ok(D2.fertilizer && D2.fertilizer.totalTon > 0 && D2.fertilizer.haNoAge === 5, `kebutuhan pupuk indikatif ${D2.fertilizer && D2.fertilizer.totalTon.toFixed(1)} ton/tahun (blok tanpa tahun tanam tidak dihitung)`);
 const c2 = D2.flow.cur, p2 = D2.flow.prev;
-ok(c2 && c2.p.m === 8 && c2.lossJjg === 6600 - 5200 && p2.p.m === 7 && p2.lossJjg === 6100 - 5600 && c2.lossRp < D2.flow.lossRp,
-  `kebocoran per bulan: Sep 26 ${c2 && c2.lossJjg} jjg vs Agu 26 ${p2 && p2.lossJjg} jjg (bukan kumulatif ${D2.flow.lossJjg} jjg)`);
+ok(c2 && c2.p.m === 8 && c2.pendingJjg === 6600 - 5200 && c2.lossJjg === 1850 && p2.p.m === 7 && p2.pendingJjg === 6100 - 5600 && p2.lossJjg === 1350 && c2.lossRp < D2.flow.lossRp,
+  `kebocoran per bulan: Sep 26 belum terjual ${c2 && c2.pendingJjg} + tertahan >1 bln ${c2 && c2.lossJjg} jjg vs Agu 26 ${p2 && p2.lossJjg} jjg (bukan kumulatif ${D2.flow.lossJjg} jjg)`);
+// Restan terbawa: panen Jun belum terjual lalu terjual Jul -> Jun "belum terjual" (bukan kerugian), Jul tidak ada kerugian
+const pm = m => ({ y: 2026, m }), ser = arr => arr.map((v, i) => ({ p: pm(5 + i), label: 'x', value: v }));
+ctx2.dR = { flowPanen: ser([18000, 23000, 20000]), flowMuat: ser([0, 41000, 19000]), flowTrip: [], flowSold: ser([0, 41000, 19000]), flowSoldNoWeight: [],
+  produksi: ser([0, 700, 330]), bjr: ser([null, 17, 17]), hargaJual: ser([2500, 2500, 2500]), revKg: [], totalJjg: ser([18000, 23000, 20000]), bjrSoldMonthly: [] };
+const FR = run2('buildFlow(dR)'), FRm = FR.monthly;
+ok(FRm[0].pendingJjg === 18000 && FRm[0].lossJjg === 0 && FRm[1].carrySold === 18000 && FRm[1].lossJjg === 0 && !FRm[1].overSold && FRm[2].pendingJjg === 1000 && FRm[2].lossJjg === 0,
+  `restan Jun terjual Jul: Jun belum terjual ${FRm[0].pendingJjg} (kerugian ${FRm[0].lossJjg}), Jul sisa terjual ${FRm[1].carrySold}, Agu kerugian ${FRm[2].lossJjg}`);
+ctx2.dR.flowSold = ser([0, 20000, 19000]); ctx2.dR.flowMuat = ser([0, 20000, 19000]);
+const FR2 = run2('buildFlow(dR)').monthly;
+ctx2.dR.partialFlow = { p: pm(8), panen: 2000, sold: 12000 };
+const FR3 = run2('buildFlow(dR)').cur;
+ok(FR3.soldLater === 10000 && FR3.lossJjg === 21000 - 10000 && FR3.pendingJjg === 1000,
+  `sisa yang sudah terjual di bulan berjalan tidak dihitung kerugian: ${FR3.soldLater} jjg terjual Sep -> tertahan ${FR3.lossJjg} jjg`);
+delete ctx2.dR.partialFlow;
+ok(FR2[2].lossJjg === 18000 + 3000 && FR2[2].pendingJjg === 1000 && FR2[2].lossRp > 0, `panen Jun (dan sisa Jul) tak terjual -> Agu tertahan >1 bulan ${FR2[2].lossJjg} jjg (indikasi hilang)`);
 const k2 = run2('computeOwnerKpis(D2)').find(k => /janjang/i.test(k.name));
 ok(k2 && /Sep 26/.test(k2.name) && /vs Agu 26/.test(k2.note), `KPI kebocoran: ${k2 && `${k2.name} ${k2.value} ${k2.unit} | ${k2.note}`}`);
 ok(P2.mains.every(m => m.summary && m.summary.rows.some(r => r.cur !== null)), `semua slide utama punya grafik kesimpulan: ${P2.mains.map(m => m.id + '=' + (m.summary ? m.summary.rows.length : 0)).join(', ')}`);
@@ -357,9 +372,13 @@ ok(/^Indikasi kurang pupuk: hasil 29% dari standar$/.test(run2('dataHeadline("pu
 // Data < 3 bulan: produktivitas disetahunkan hanya indikatif (tidak jadi dasar status), BJR tetap berlaku
 const sShort = st(Object.assign({}, base, { marihat: Object.assign({}, Mlow, { nMonths: 1, achBjr: 0.95 }) }));
 const sShortB = st(Object.assign({}, base, { marihat: Object.assign({}, Mlow, { nMonths: 1 }) }));
-ok(sShort.verdict === 'belum' && /indikatif/.test(sShort.evidence[0].arti) && sShortB.verdict === 'kurang' && /^BJR 55%/.test(sShortB.reason),
-  `data 1 bulan: hasil rendah saja -> "${sShort.label}"; dengan BJR rendah -> "${sShortB.label}" (${sShortB.reason})`);
-ctx2.dS = Object.assign({}, D2, { fertStatus: Object.assign({}, sK, { priorityBlocks: ['A1', 'B3'] }), marihat: Object.assign({}, Mok) });
+ok(sShort.verdict === 'belum' && /indikatif/.test(sShort.evidence[0].arti) && sShortB.verdict === 'belum' && /baru 1 bulan data, masih indikatif/.test(sShortB.evidence.find(e => e.indikator === 'BJR').arti),
+  `data 1 bulan: hasil & BJR rendah -> "${sShortB.label}" (angka per tahun dan BJR satu bulan masih indikatif)`);
+const sNw = st(Object.assign({}, base, { marihat: Object.assign({}, Mlow, { achTon: 0.95 }), noWeight: { share: 96 } }));
+const sBjr = st(Object.assign({}, base, { marihat: Object.assign({}, Mlow, { achTon: 0.95 }) }));
+ok(sNw.verdict !== 'kurang' && /hanya dari 4% janjang yang ditimbang/.test(sNw.evidence.find(e => e.indikator === 'BJR').arti) && sBjr.verdict === 'kurang' && /^BJR 55%/.test(sBjr.reason),
+  `BJR dari 4% janjang ditimbang tidak jadi dasar status ("${sNw.label}"); BJR dari data timbang cukup -> "${sBjr.label}"`);
+ctx2.dS = Object.assign({}, D2, { fertStatus: Object.assign({}, sK, { reason: '2 blok (35% luas) rutin dipanen tetapi janjangnya di bawah 60% standar', priorityBlocks: ['A1', 'B3'] }), marihat: Object.assign({}, Mok) });
 ok(run2('dataHeadline("pupuk", dS)') === 'Indikasi kurang pupuk di 2 blok rutin panen', `status kurang dari bukti blok saja -> judul "${run2('dataHeadline("pupuk", dS)')}" (bukan BJR)`);
 ok(rc2.indexOf('R24') >= 0 && /di atas acuan/.test(run2('detectRecommendations(D2, P2.topics, detectAnomalies(P2.topics, D2))').find(r => r.code === 'R24').evidence), 'R24 hanya bila dosis aktual menyimpang (di atas prediksi)');
 // Tabel sheet "pupuk" dibaca langsung bila ada (mengganti tabel bawaan), lalu kembalikan tabel bawaan
@@ -370,6 +389,29 @@ ok(run2('readHaraVegetatif(ssMock)') === 4 && run2('haraVegetatifAt(7).N') === 3
   'tabel hara vegetatif dibaca dari sheet "pupuk" (umur di atas tabel memakai baris terakhir)');
 run2('HARA_VEGETATIF = HARA_VEGETATIF_DEFAULT');
 ok(run2('dataHeadline("m_kebocoran", D2)') && /Sep|September/.test(run2('dataHeadline("m_kebocoran", D2)')), `judul otomatis kebocoran: "${run2('dataHeadline("m_kebocoran", D2)')}"`);
+
+// 10b. Temuan audit data asli: label pembanding, tabel upkeep berketerangan, blok tanpa janjang, pemicu rekomendasi
+ok(run2('refMonthLabel({y:2026,m:8},{y:2026,m:7})') === 'Agu 26 (bulan lalu)' && run2('refMonthLabel({y:2026,m:8},{y:2026,m:6})') === 'Jul 26 (pembanding terakhir; Agu 26 kosong)',
+  'pembanding "bulan lalu" hanya untuk bulan kalender sebelumnya; bulan kosong disebut terus terang');
+const upGrid = [['Upkeep Cost 12 bulan juga', ''], ['activity_group', 'total_upkeep_cost'], ['PRUNING', '1618000'], ['Pemupukan', '500000'], ['', '']];
+ctx2.upGrid = upGrid;
+ok(run2('readTableBelow(upGrid, DECK_CONFIG.HEADERS.UPKEEP_LABEL, DECK_CONFIG.HEADERS.UPKEEP_HEADER).rows.length') === 2 &&
+   run2(`readTableBelow([['Upkeep Cost (catatan lain)'],['activity_group','total_upkeep_cost'],['A','1']].map(r => r.concat(['',''])), ['Upkeep Cost'], ['activity_group']).rows.length`) === 1,
+  'tabel upkeep terbaca walau judulnya diberi catatan ("Upkeep Cost 12 bulan juga")');
+const BA = run2(`buildBlockAnalytics({ blocksRaw: [1, 2, 3].map(m => ({ p: { y: 2026, m }, label: 'x', value: 'X1, 10 ha, 2015, -, 0; Y1, 5 ha, 2015, -, 100; Z1, 3 ha, 2027, -, 50' })) })`);
+ok(BA.zeroJjg.map(b => b.name).join() === 'X1' && BA.zeroJjgHa === 10 && BA.yearAfterHarvest.map(b => b.name).join() === 'Z1',
+  'blok dengan janjang 0 di semua bulan dikeluarkan dari pembagi; tahun tanam setelah panen pertama ditandai');
+const reco = c => run2(`RECO_CATALOG.find(r => r.code === '${c}')`);
+ctx2.r09 = reco('R09'); ctx2.r04 = reco('R04'); ctx2.r17 = reco('R17');
+ok(run2(`r09.when({ flow: null }, { detected: [{ text: 'PERLU DICEK: janjang dimuat melebihi dipanen 5.021 jjg; cek pencatatan panen dan restan awal periode.' }] })`) === null &&
+   run2(`!!r09.when({ flow: null }, { detected: [{ text: 'PERLU DICEK: restan menumpuk 3 bulan' }] })`),
+  'R09 (kapasitas muat) tidak terpicu oleh temuan "dimuat melebihi dipanen"');
+ok(run2(`r04.when({ yield: [], upkeep: null, marihat: { reliable: false, achTon: 0.28, realTonHa: 5.4, pot: { ton: 19.6 }, cls: 'S3' } })`) === null &&
+   run2(`r04.when({ yield: [], upkeep: null, marihat: { reliable: true, achTon: 0.28, realTonHa: 5.4, pot: { ton: 19.6 }, cls: 'S3' } }).priority`) === 'tinggi',
+  'R04 tidak terpicu dari produktivitas yang disetahunkan dari data pendek');
+ctx2.yUp = [5, 6, 7, 8, 9, 10].map((v, i) => ({ p: { y: 2026, m: i }, label: 'x', value: v }));
+ok(run2(`r17.when({ yield: yUp, marihat: { achTon: 0.29 } })`) === null && !!run2(`r17.when({ yield: yUp, marihat: { achTon: 0.95 } })`),
+  'R17 (pertahankan praktik baik) tidak muncul bila hasil masih < 70% standar');
 
 // 11. Produksi per blok (janjang dipanen per blok) + kaitan dengan status pupuk
 const pb = run2(`parseBlocks('F10, 3.39 ha, 2012, -, 342; B8, 1.49 ha, 2017, -; Blok Pasar Bingung, 5 ha, 2009, Gambut, 1084')`);

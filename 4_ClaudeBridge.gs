@@ -499,7 +499,7 @@ function fallbackSummary(data) {
   let s = `Laporan ini merangkum kinerja kebun ${data.title}${scope}.`;
   if (y) s += ` Yield rata-rata **${fmt(y.avg, 2)} ton/ha** per bulan, tertinggi ${fmt(y.max.value, 2)} ton/ha pada ${monthLong(y.max.p)} dan terendah ${fmt(y.min.value, 2)} ton/ha pada ${monthLong(y.min.p)}.`;
   const fc = data.flow && (data.flow.cur || data.flow);
-  if (fc && !fc.overSold && fc.lossJjg) s += ` Sebanyak ${fmt(fc.lossPct, 0)}% janjang dipanen${fc.p ? ` pada ${monthLong(fc.p)}` : ''} tidak sampai terjual${fc.lossRp ? `, setara ${fmtRp(fc.lossRp)}` : ''}.`;
+  if (fc && !fc.overSold && fc.lossJjg) s += ` Sebanyak ${fmt(fc.lossJjg, 0)} janjang dari panen sebelumnya masih belum terjual${fc.p ? ` hingga akhir ${monthLong(fc.p)}` : ''}${fc.lossRp ? `, setara ${fmtRp(fc.lossRp)}` : ''}.`;
   return trimToSentence(s, AI_LIMITS.SUMMARY_MAX_CHARS, true);
 }
 

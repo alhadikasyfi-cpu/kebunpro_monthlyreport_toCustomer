@@ -52,9 +52,9 @@ const RECO_CATALOG = [
     action: 'Tinjau dosis, jenis, dan waktu aplikasi pupuk per blok; aplikasikan saat tanah lembap dan sesuai rekomendasi analisis daun/tanah.',
     signals: 'Produktivitas jauh di bawah standar Marihat untuk umurnya; yield turun/fluktuatif; porsi biaya pupuk besar tanpa kenaikan yield.',
     topics: ['yield', 'upkeep', 'umur'],
-    when: d => { const y = signals(d.yield); const fert = upkeepItems(d).find(x => /fert|pupuk/i.test(x.name));
+    when: d => { const y = signals(d.yield); const fert = upkeepItems(d).find(x => /fert|pupuk|pemupukan/i.test(x.name));
       const M = d.marihat;
-      if (M && M.achTon < 0.7) return { evidence: `produktivitas ${fmt(M.realTonHa, 1)} t/ha/th, baru ${fmtPct(M.achTon * 100, 0)} dari standar Marihat ${M.cls} (${fmt(M.pot.ton, 1)})${fert ? `; biaya pupuk ${fmtPct(fert.pct, 0)} upkeep` : ''}`, priority: M.achTon < 0.5 ? 'tinggi' : 'sedang' };
+      if (M && M.reliable && M.achTon < 0.7) return { evidence: `produktivitas ${fmt(M.realTonHa, 1)} t/ha/th, baru ${fmtPct(M.achTon * 100, 0)} dari standar Marihat ${M.cls} (${fmt(M.pot.ton, 1)})${fert ? `; biaya pupuk ${fmtPct(fert.pct, 0)} upkeep` : ''}`, priority: M.achTon < 0.5 ? 'tinggi' : 'sedang' };
       return ['turun', 'fluktuatif'].indexOf(y.trend) >= 0
         ? { evidence: `yield ${y.trend}${fert ? `; biaya pupuk ${fmtRp(fert.value)} (${fmtPct(fert.pct, 0)} upkeep)` : ''}`, priority: 'sedang' } : null; } },
 
@@ -89,9 +89,12 @@ const RECO_CATALOG = [
     signals: 'JJG dimuat jauh lebih kecil dari JJG dipanen; hari kerja muat sedikit.',
     topics: ['mandormuat', 'mandorpanen'],
     when: (d, ctx) => {
-      const st = d.flow && d.flow.steps.find(x => x.from === 'Dipanen' && x.loss);
+      // hanya bila ada janjang yang tertahan > 1 bulan (selisih satu bulan saja bisa karena waktu muat/jual)
+      const F = d.flow, held = F && F.cur && !F.cur.overSold && F.cur.lossJjg > 0;
+      const st = held && F.steps.find(x => x.from === 'Dipanen' && x.loss);
       if (st) return { evidence: `${fmt(st.gap, 0)} jjg (${fmt(st.pct, 0)}%) dipanen tidak tercatat dimuat${st.rp ? ` ≈ ${fmtRp(st.rp)}` : ''}`, priority: 'tinggi' };
-      const a = (ctx.detected || []).find(x => /restan/.test(x.text)); return a ? { evidence: a.text.replace(/^PERLU DICEK:\s*/, ''), priority: 'tinggi' } : null; } },
+      // hanya temuan restan bertanda tertahan (muat < panen), bukan "dimuat melebihi dipanen"
+      const a = (ctx.detected || []).find(x => /restan/.test(x.text) && !/melebihi|tidak tercatat menjual/.test(x.text)); return a ? { evidence: a.text.replace(/^PERLU DICEK:\s*/, ''), priority: 'tinggi' } : null; } },
 
   { code: 'R10', title: 'Samakan produktivitas antar-pemanen',
     action: 'Tetapkan target JJG/hari berbasis capaian terbaik, tinjau pembagian ancak, dan beri insentif premi.',
@@ -152,8 +155,8 @@ const RECO_CATALOG = [
     when: d => { const F = d.flow; if (!F) return null;
       // bulan laporan dulu (dibanding bulan sebelumnya); kumulatif hanya bila bulan laporan tidak terukur
       const c = F.cur && !F.cur.overSold ? F.cur : null, p = F.prev && !F.prev.overSold ? F.prev : null;
-      if (c && c.worst && c.steps.some(x => x.loss)) return { evidence: `${monthShort(c.p)}: ${fmt(c.lossJjg, 0)} jjg (${fmt(c.lossPct, 0)}%) tidak sampai terjual${c.lossRp ? ` ≈ ${fmtRp(c.lossRp)}` : ''}` +
-        (p && p.lossRp && c.lossRp ? ` vs ${monthShort(p.p)} ${fmtRp(p.lossRp)}` : '') + `; terbesar di ${c.worst.from} → ${c.worst.to}`, priority: 'tinggi' };
+      if (c && c.lossJjg && c.lossPct > DECK_CONFIG.THRESHOLDS.FLOW_LOSS_PCT) return { evidence: `${monthShort(c.p)}: ${fmt(c.lossJjg, 0)} jjg (${fmt(c.lossPct, 0)}%) panen bulan sebelumnya masih belum terjual${c.lossRp ? ` ≈ ${fmtRp(c.lossRp)}` : ''}` +
+        (p && p.lossRp && c.lossRp ? ` vs ${monthShort(p.p)} ${fmtRp(p.lossRp)}` : '') + (c.worst ? `; selisih terbesar di ${c.worst.from} → ${c.worst.to}` : ''), priority: 'tinggi' };
       if (c || !F.worst || !F.steps.some(x => x.loss)) return null;
       return { evidence: `kumulatif ${fmt(F.lossJjg, 0)} jjg (${fmt(F.lossPct, 0)}%) tidak sampai terjual${F.lossRp ? ` ≈ ${fmtRp(F.lossRp)}` : ''}; terbesar di ${F.worst.from} → ${F.worst.to}`, priority: 'tinggi' }; } },
 
@@ -187,7 +190,7 @@ const RECO_CATALOG = [
     topics: ['tanah', 'pupuk', 'marihat'],
     when: d => { const S = d.soil; if (!S || !S.unknownHa) return null;
       return { evidence: `jenis tanah belum tercatat untuk ${S.unknownCount} blok (${fmt(S.unknownHa, 1)} ha, ${fmt(S.unknownPct, 0)}% luas)`,
-               priority: S.unknownPct >= 50 || (d.marihat && d.marihat.achTon < 0.7) ? 'tinggi' : 'sedang' }; } },
+               priority: S.unknownPct >= 50 || (d.marihat && d.marihat.reliable && d.marihat.achTon < 0.7) ? 'tinggi' : 'sedang' }; } },
 
   { code: 'R23', title: 'Pastikan status pupuk lewat uji daun dan tanah',
     action: 'Pohon terindikasi kurang atau kelebihan pupuk; ambil contoh daun (pelepah ke-17) dan tanah per kelompok blok sejenis untuk memastikan hara yang kurang atau berlebih sebelum mengubah dosis pupuk.',
@@ -212,7 +215,8 @@ const RECO_CATALOG = [
     action: 'Dokumentasikan praktik panen dan perawatan yang membuat kinerja naik agar tetap dijalankan.',
     signals: 'Yield atau produksi naik dan stabil; margin positif.',
     topics: ['yield', 'produksi', 'margin'],
-    when: d => { const g = signals(d.yield); return g.trend === 'naik' ? { evidence: `yield ${g.trend} (bulan terakhir ${g.position})`, priority: 'sedang' } : null; } }
+    // tidak dipakai bila hasil masih jauh di bawah standar (kontradiktif dengan temuan lain)
+    when: d => { const g = signals(d.yield); if (d.marihat && d.marihat.achTon < 0.7) return null; return g.trend === 'naik' ? { evidence: `yield ${g.trend} (bulan terakhir ${g.position})`, priority: 'sedang' } : null; } }
 ];
 
 const RECO_CODES = RECO_CATALOG.map(r => r.code).concat(['LAINNYA']);

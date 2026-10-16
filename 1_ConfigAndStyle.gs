@@ -122,7 +122,8 @@ const DECK_CONFIG = {
     BLOCK_LOW_ACH: 0.6,         // janjang/pokok/tahun blok < 60% standar Marihat umurnya -> blok berproduktivitas rendah
     BLOCK_REGULAR: 0.7,         // blok dipanen ≥ 70% bulan periode = panen teratur (rendahnya bukan karena rotasi)
     BLOCK_VERY_LOW_ACH: 0.1,    // janjang/ha < 10% standar -> selain penyebab di lapangan, luas blok juga perlu dicek
-    MIN_MONTHS_ANNUAL: 3,       // < 3 bulan data: angka per tahun hanya indikatif (musim panen), penyebab blok rendah belum disimpulkan
+    BJR_MAX_NOWEIGHT_PCT: 50,   // > 50% janjang terjual tanpa berat -> BJR dari sampel terlalu kecil, tidak jadi dasar status pupuk
+    MIN_MONTHS_ANNUAL: 6,       // < 6 bulan data: angka per tahun hanya indikatif (musim panen: Jun–Sep ±38–40% panen setahun), penyebab blok rendah belum disimpulkan
     BLOCK_SUSPECT_ACH: 2.0,     // janjang/ha > 200% standar -> kemungkinan salah luas/nama blok, dikeluarkan dari analisis blok
     BLOCK_LOW_AREA: 0.3         // ≥ 30% luas blok berproduktivitas rendah -> ikut menjadi bukti indikasi kurang pupuk
   },
@@ -289,7 +290,8 @@ const DECK_CONFIG = {
     UPAH_KG: ['total_cost_per_kg', 'upah_per_kg_idr'],     // biaya pekerja per kg (dulu: upah per kg)
     REV_HA: ['revenue_per_ha', 'revenue_per_ha_idr'],
     COST_HA: ['total_cost_per_ha', 'cost_per_ha_idr'],
-    UPKEEP_LABEL: ['Upkeep Cost'],
+    UPKEEP_LABEL: ['Upkeep Cost', 'Upkeep Cost 12 bulan juga'],
+    UPKEEP_HEADER: ['activity_group'],
     RAWAT_LABEL: ['Top Mandor Rawat'],
     PANEN_LABEL: ['Top Mandor Panen'],
     MUAT_LABEL: ['Top Mandor Muat'],

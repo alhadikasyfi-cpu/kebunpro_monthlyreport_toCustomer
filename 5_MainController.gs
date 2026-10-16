@@ -332,7 +332,8 @@ const OWNER_KPIS = {
     const M = d.marihat;
     if (!M) return null;
     return { name: `Vs standar Marihat ${M.cls}`, value: fmtPct(M.achTon * 100, 0), unit: '',
-             note: `${fmt(M.realTonHa, 1)} vs potensi ${fmt(M.pot.ton, 1)} ton/ha/tahun`, tone: M.achTon >= 0.9 ? 'good' : 'bad' };
+             note: `${fmt(M.realTonHa, 1)} vs potensi ${fmt(M.pot.ton, 1)} ton/ha/tahun${M.reliable === false ? ` · data ${M.nMonths} bln, indikatif` : ''}`,
+             tone: M.reliable === false ? 'neutral' : M.achTon >= 0.9 ? 'good' : 'bad' };
   },
   // Kebocoran BULAN LAPORAN (bukan kumulatif), dibandingkan bulan sebelumnya
   kebocoran_janjang: d => {
@@ -341,7 +342,10 @@ const OWNER_KPIS = {
     const c = F.cur || F, p = F.cur ? F.prev : null;
     const mon = c.p ? ` ${monthShort(c.p)}` : '';
     if (c.overSold) return { name: `Kebocoran janjang${mon}`, value: '–', unit: 'belum terukur', note: 'Terjual melebihi dipanen; catatan panen kurang', tone: 'bad' };
-    if (!c.lossJjg) return { name: `Kebocoran janjang${mon}`, value: '0%', unit: '', note: `Batas wajar ≤ ${lim}% · tercatat lengkap`, tone: 'good' };
+    const pend = c.pendingJjg ? ` · ${fmt(c.pendingJjg, 0)} jjg panen${mon} belum terjual` : '';
+    if (!c.lossJjg) return c.pendingJjg && c.pendingPct > lim
+      ? { name: `Belum terjual${mon}`, value: fmt(c.pendingJjg, 0), unit: 'jjg', note: `${fmt(c.pendingPct, 0)}% dari dipanen · pantau penjualan bulan depan`, tone: 'neutral' }
+      : { name: `Janjang tertahan >1 bln${mon}`, value: '0', unit: 'jjg', note: `Tidak ada sisa panen lama${pend}`, tone: 'good' };
     const bad = c.lossPct > lim;
     const prevOk = p && !p.overSold && p.lossRp !== null && p.lossRp !== undefined;
     if (c.lossRp) {
@@ -349,11 +353,11 @@ const OWNER_KPIS = {
       if (prevOk && p.lossRp) {
         const ch = kpiDelta(c.lossRp, p.lossRp);
         return { name: `Kerugian janjang${mon}`, value: r.value, unit: r.unit,
-                 note: `${fmt(c.lossPct, 0)}% hilang · ${arrowPct(ch)} vs ${monthShort(p.p)} (${fmtRpShort(p.lossRp)})`, tone: bad || toneOf(ch, false) === 'bad' ? 'bad' : 'good' };
+                 note: `${fmt(c.lossJjg, 0)} jjg tertahan >1 bln · ${arrowPct(ch)} vs ${monthShort(p.p)} (${fmtRpShort(p.lossRp)})`, tone: bad || toneOf(ch, false) === 'bad' ? 'bad' : 'good' };
       }
-      return { name: `Kerugian janjang${mon}`, value: r.value, unit: r.unit, note: `${fmt(c.lossPct, 0)}% hilang · batas wajar ≤ ${lim}%`, tone: bad ? 'bad' : 'good' };
+      return { name: `Kerugian janjang${mon}`, value: r.value, unit: r.unit, note: `${fmt(c.lossJjg, 0)} jjg tertahan >1 bln${pend}`, tone: bad ? 'bad' : 'good' };
     }
-    return { name: `Kebocoran janjang${mon}`, value: `${fmt(c.lossPct, 0)}%`, unit: '', note: `Batas wajar ≤ ${lim}%`, tone: bad ? 'bad' : 'good' };
+    return { name: `Janjang tertahan >1 bln${mon}`, value: fmt(c.lossJjg, 0), unit: 'jjg', note: `${fmt(c.lossPct, 0)}% · batas wajar ≤ ${lim}%`, tone: bad ? 'bad' : 'good' };
   },
   laba_bulan_terakhir: d => {
     const s = seriesStats(d.profit);
@@ -731,8 +735,8 @@ function buildTopics(d) {
   const up = upkeepItems(d);
   if (up.length >= 2) T.push({
     id: 'upkeep', section: 'Analisis Pengeluaran', title: 'Analisis Pengeluaran: Komposisi Upkeep Cost',
-    visual: `bar horizontal biaya perawatan per kelompok aktivitas (Rp jt dan % dari total), periode ${DECK_CONFIG.UPKEEP_ACTIVITY_PERIOD}`,
-    facts: describeUpkeep(up),
+    visual: `bar horizontal biaya perawatan per kelompok aktivitas (Rp jt dan % dari total), periode ${d.upkeepPeriod || DECK_CONFIG.UPKEEP_ACTIVITY_PERIOD}`,
+    facts: describeUpkeep(up, d.upkeepPeriod),
     fallback: `${up[0].name} menyerap porsi upkeep terbesar, ${fmtRp(up[0].value)} (${fmtPct(up[0].pct, 0)} dari total upkeep cost).`,
     draw: b => drawHBarChart(b, up, { scale: 1e6, labelFmt: v => `${fmt(v, 2)} jt` })
   });
@@ -772,7 +776,7 @@ function buildTopics(d) {
     visual: 'bar pendapatan per ha (Rp jt) dengan garis biaya per ha (merah putus-putus)',
     facts: [describeSeries('Pendapatan per ha', '', d.revHa, fmtRp), describeSeries('Biaya per ha', '', d.costHa, fmtRp),
             describeSeries('Porsi biaya terhadap pendapatan per ha', '%', d.costRatio, f1),
-            up.length ? describeUpkeep(up) : ''].join('\n'),
+            up.length ? describeUpkeep(up, d.upkeepPeriod) : ''].join('\n'),
     fallback: fallbackInsight('Pendapatan per hektar', '', d.revHa, fmtRp),
     draw: b => drawBarChart(b, d.revHa, {
       scale: 1e6, labelFmt: f2, axisFmt: v => `${fmt(v, 0)} jt`,
@@ -809,9 +813,14 @@ function buildTopics(d) {
       fallback: (() => {
         const c = F.cur || F, p = F.cur ? F.prev : null, when = c.p ? ` pada ${monthLong(c.p)}` : '';
         if (c.overSold) return `Janjang terjual${when} ${fmt(c.overSoldPct, 1)}% lebih banyak dari janjang dipanen, artinya pencatatan panen belum lengkap atau restan bulan lalu ikut terjual. Kebocoran bulan ini belum bisa diukur.`;
-        if (!c.worst) return `Janjang dipanen, dimuat, dan terjual relatif seimbang${when}; tidak terlihat kebocoran berarti.`;
+        if (c.lossJjg === undefined || c.pendingJjg === undefined) {   // cadangan kumulatif (tanpa data per bulan)
+          if (!c.worst) return 'Janjang dipanen, dimuat, dan terjual relatif seimbang; tidak terlihat kebocoran berarti.';
+          return `Dari ${fmt(c.stages[0].total, 0)} janjang dipanen, ${fmt(c.lossJjg, 0)} (${fmt(c.lossPct, 0)}%) tidak sampai terjual. Selisih terbesar pada tahap ${c.worst.from} → ${c.worst.to}.`;
+        }
         const vs = p && !p.overSold && p.lossRp && c.lossRp ? ` dibanding ${fmtRp(p.lossRp)} pada ${monthLong(p.p)}` : '';
-        return `Dari ${fmt(c.stages[0].total, 0)} janjang dipanen${when}, ${fmt(c.lossJjg, 0)} (${fmt(c.lossPct, 0)}%) tidak sampai terjual${c.lossRp ? `, setara sekitar ${fmtRp(c.lossRp)}${vs}` : ''}. Selisih terbesar pada tahap ${c.worst.from} → ${c.worst.to}, yang dipegang ${c.worst.role}.`;
+        const pend = c.pendingJjg ? `${fmt(c.pendingJjg, 0)} janjang (${fmt(c.pendingPct, 0)}%) panen${when} belum terjual dan perlu dipantau penjualannya bulan depan` : `Panen${when} sudah tercatat terjual`;
+        const aged = c.lossJjg ? ` Sebanyak ${fmt(c.lossJjg, 0)} janjang dari panen bulan sebelumnya masih belum terjual lebih dari sebulan${c.lossRp ? `, setara sekitar ${fmtRp(c.lossRp)}${vs}` : ''}; janjang ini kemungkinan besar hilang atau rusak.` : ' Tidak ada sisa panen bulan sebelumnya yang tertahan.';
+        return `${pend}.${aged}${c.worst && c.lossJjg ? ` Selisih terbesar pada tahap ${c.worst.from} → ${c.worst.to}, yang dipegang ${c.worst.role}.` : ''}`;
       })(),
       draw: b => drawFlowFunnel(b, F.cur || F)   // corong BULAN LAPORAN; kumulatif hanya di catatan fakta
     });
@@ -1004,6 +1013,13 @@ const MAIN_GROUPS = [
  * pembandingnya (bulan sebelumnya, atau standar Marihat untuk slide penyebab). Detail tren tetap di lampiran.
  * Setiap fungsi -> {curLabel, refLabel, rows:[{label, unit, cur, ref, f, goodUp}], caption, desc} atau null.
  */
+/** Label pembanding: "(bulan lalu)" hanya bila memang bulan kalender sebelumnya; bila bulan itu kosong, sebut terus terang. */
+function refMonthLabel(p, q) {
+  if (!q) return 'belum ada pembanding';
+  const prevCal = { y: p.m === 0 ? p.y - 1 : p.y, m: p.m === 0 ? 11 : p.m - 1 };
+  return mkey(q) === mkey(prevCal) ? `${monthShort(q)} (bulan lalu)` : `${monthShort(q)} (pembanding terakhir; ${monthShort(prevCal)} kosong)`;
+}
+
 const MAIN_SUMMARY = {
   m_kinerja: d => {
     const base = seriesStats(d.produksi) || seriesStats(d.yield);
@@ -1014,7 +1030,7 @@ const MAIN_SUMMARY = {
     const row = (label, unit, get, f, goodUp) => ({ label, unit, cur: get(p), ref: q ? get(q) : null, f, goodUp });
     const f1 = v => fmt(v, 1);
     return {
-      curLabel: `${monthShort(p)} (bulan laporan)`, refLabel: q ? `${monthShort(q)} (bulan lalu)` : 'belum ada pembanding',
+      curLabel: `${monthShort(p)} (bulan laporan)`, refLabel: refMonthLabel(p, q),
       rows: [
         row(d.produksiActual === false ? 'Estimasi produksi' : 'TBS terjual', 'ton', m => at(d.produksi, m), v => fmt(v, Math.abs(v) < 100 ? 1 : 0), true),
         row('Pendapatan', 'Rp juta', jt(d.revenueTotal), f1, true),
@@ -1033,15 +1049,15 @@ const MAIN_SUMMARY = {
     const pm = ref ? ref.p : (N && N.monthly.length > 1 ? N.monthly[N.monthly.length - 2].p : null);
     if (!cm) return null;
     const rows = [
-      { label: 'Janjang hilang', unit: 'janjang, dipanen tidak terjual', cur: lossV(c, 'lossJjg'), ref: lossV(ref, 'lossJjg'), f: v => fmt(v, 0), goodUp: false },
-      { label: 'Porsi hilang', unit: `% dari dipanen (wajar ≤ ${DECK_CONFIG.THRESHOLDS.FLOW_LOSS_PCT}%)`, cur: lossV(c, 'lossPct'), ref: lossV(ref, 'lossPct'), f: v => `${fmt(v, 0)}%`, goodUp: false },
-      { label: 'Estimasi kerugian', unit: 'Rp juta', cur: lossV(c, 'lossRp') !== null ? lossV(c, 'lossRp') / 1e6 : null,
+      { label: 'Belum terjual', unit: 'janjang panen bulan itu, belum terjual', cur: lossV(c, 'pendingJjg'), ref: lossV(ref, 'pendingJjg'), f: v => fmt(v, 0), goodUp: false },
+      { label: 'Tertahan > 1 bulan', unit: 'janjang panen bulan sebelumnya, belum terjual', cur: lossV(c, 'lossJjg'), ref: lossV(ref, 'lossJjg'), f: v => fmt(v, 0), goodUp: false },
+      { label: 'Estimasi kerugian', unit: 'Rp juta (janjang tertahan > 1 bulan)', cur: lossV(c, 'lossRp') !== null ? lossV(c, 'lossRp') / 1e6 : null,
         ref: lossV(ref, 'lossRp') !== null ? lossV(ref, 'lossRp') / 1e6 : null, f: v => fmt(v, 1), goodUp: false },
       { label: 'Terjual tanpa berat', unit: `% janjang terjual (wajar ≤ ${DECK_CONFIG.THRESHOLDS.NOWEIGHT_PCT}%)`, cur: nwAt(cm), ref: nwAt(pm), f: v => `${fmt(v, 0)}%`, goodUp: false }
     ];
     const caption = c && c.overSold ? `Kebocoran ${monthLong(c.p)} belum terukur: janjang terjual melebihi janjang dipanen (catatan panen kurang atau restan bulan lalu ikut terjual).` : '';
-    return { curLabel: `${monthShort(cm)} (bulan laporan)`, refLabel: pm ? `${monthShort(pm)} (bulan lalu)` : 'belum ada pembanding',
-             rows, caption, desc: 'janjang hilang, porsi hilang, estimasi kerugian, dan janjang tanpa berat bulan laporan vs bulan lalu' };
+    return { curLabel: `${monthShort(cm)} (bulan laporan)`, refLabel: refMonthLabel(cm, pm),
+             rows, caption, desc: 'janjang belum terjual, janjang tertahan lebih dari sebulan, estimasi kerugian, dan janjang tanpa berat bulan laporan vs bulan lalu' };
   },
   m_penyebab: d => {
     const M = d.marihat, S = d.soil;
@@ -1078,7 +1094,7 @@ const MAIN_SUMMARY = {
     const price = d.hargaJual && d.hargaJual.length ? d.hargaJual : d.revKg;
     const row = (label, unit, get, f, goodUp) => ({ label, unit, cur: get(p), ref: q ? get(q) : null, f, goodUp });
     return {
-      curLabel: `${monthShort(p)} (bulan laporan)`, refLabel: q ? `${monthShort(q)} (bulan lalu)` : 'belum ada pembanding',
+      curLabel: `${monthShort(p)} (bulan laporan)`, refLabel: refMonthLabel(p, q),
       rows: [
         row('Laba kotor', 'Rp juta, sebelum biaya material', m => { const v = at(d.profit, m); return v === null ? null : v / 1e6; }, v => fmt(v, 1), true),
         row('Porsi biaya pekerja', '% dari pendapatan', ratio, v => `${fmt(v, 0)}%`, false),
@@ -1114,12 +1130,13 @@ function dataHeadline(id, d) {
   // Kebocoran bulan laporan (bukan kumulatif), dengan pembanding bulan lalu bila ada
   const kebocoran = () => {
     const c = F && F.cur, p = F && F.prev;
-    if (c && !c.overSold && c.lossJjg && c.lossPct >= T.FLOW_LOSS_PCT) {
+    if (c && !c.overSold && c.lossJjg && c.lossPct >= T.FLOW_LOSS_PCT) {   // kerugian = tertahan > 1 bulan
       const rp = c.lossRp ? `Rp${fmt(c.lossRp / 1e6, 1)} juta` : '';
       const vs = p && !p.overSold && p.lossRp && c.lossRp ? `, ${c.lossRp >= p.lossRp ? 'naik' : 'turun'} dari ${monthShort(p.p)}` : '';
       return [rp ? `Kerugian janjang ${rp} di ${BULAN_PENDEK[c.p.m]}${vs}` : '', rp ? `Kerugian janjang ${rp} di ${monthLong(c.p)}` : '',
-              `${fmt(c.lossPct, 0)}% janjang ${monthLong(c.p)} tidak terjual`, `${fmt(c.lossPct, 0)}% janjang dipanen tidak terjual`].filter(Boolean);
+              `${fmt(c.lossJjg, 0)} janjang tertahan lebih dari sebulan`].filter(Boolean);
     }
+    if (c && !c.overSold && c.pendingJjg && c.pendingPct >= T.FLOW_LOSS_PCT) return [`${fmt(c.pendingPct, 0)}% panen ${monthLong(c.p)} belum terjual`, `${fmt(c.pendingPct, 0)}% panen bulan ini belum terjual`];
     if (N && N.share > T.NOWEIGHT_PCT) return [`${fmt(N.share, 0)}% janjang terjual tanpa catatan berat`];
     if (c && c.overSold) return [`Kebocoran ${monthLong(c.p)} belum terukur`, 'Kebocoran belum terukur, catatan panen kurang'];
     if (F && F.overSold) return ['Kebocoran belum terukur, catatan panen kurang', 'Kebocoran janjang belum dapat diukur'];
@@ -1128,6 +1145,7 @@ function dataHeadline(id, d) {
   };
   const S = d.soil, FZ = d.fertilizer;
   const penyebab = () => {
+    if (M && M.reliable === false) return [`Hasil ${pct(M.achTon)} dari standar (data ${M.nMonths} bulan)`];
     if (M && M.achTon < 0.9) {
       if (M.achBjr && (!M.achJjg || M.achBjr <= M.achJjg)) return [`Hasil rendah: BJR ${fmt(M.realBjr, 1)} kg, ${pct(M.achBjr)} dari standar`, `Hasil rendah: BJR ${pct(M.achBjr)} dari standar`];
       if (M.achJjg) return [`Hasil rendah: janjang per ha ${pct(M.achJjg)} dari standar`, `Hasil rendah: janjang/ha ${pct(M.achJjg)} standar`];
@@ -1170,8 +1188,8 @@ function dataHeadline(id, d) {
     pupuk: () => { const F2 = d.fertStatus; if (!F2) return null;
       const M2 = d.marihat, pc = v => `${fmt(v * 100, 0)}%`;
       if (F2.verdict === 'kurang') return (F2.doseVerdict === 'kurang' ? [`Indikasi kurang pupuk di ${fmt(d.npk.kurangHa, 0)} ha`]
-        : M2 && M2.achTon < 0.8 && M2.nMonths >= T.MIN_MONTHS_ANNUAL ? [`Indikasi kurang pupuk: hasil ${pc(M2.achTon)} dari standar`]
-        : M2 && M2.achBjr && M2.achBjr < 0.85 ? [`Indikasi kurang pupuk: BJR ${pc(M2.achBjr)} dari standar`]
+        : /^hasil/.test(F2.reason) ? [`Indikasi kurang pupuk: hasil ${pc(M2.achTon)} dari standar`]
+        : /^BJR/.test(F2.reason) ? [`Indikasi kurang pupuk: BJR ${pc(M2.achBjr)} dari standar`]
         : [`Indikasi kurang pupuk di ${F2.priorityBlocks.length} blok rutin panen`]).concat(['Indikasi kurang pupuk, perlu uji daun']);
       if (F2.verdict === 'berlebih') return [`Indikasi kelebihan pupuk di ${fmt(d.npk.lebihHa, 0)} ha`, 'Indikasi kelebihan pupuk'];
       if (F2.verdict === 'sesuai') return ['Tidak ada indikasi kurang pupuk'];

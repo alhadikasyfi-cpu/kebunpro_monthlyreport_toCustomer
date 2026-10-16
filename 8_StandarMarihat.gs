@@ -61,7 +61,10 @@ function buildMarihat(d) {
   const B = d.blocks;
   if (!B || !B.blocks.length) return null;
   const cls = d.landClass;
-  const known = B.blocks.filter(b => b.age !== null && b.age >= 3);
+  // Blok yang janjangnya tercatat 0 di semua bulan (tidak pernah menghasilkan) tidak dipakai sebagai pembagi maupun potensi
+  const zero = {}; (B.zeroJjg || []).forEach(b => { zero[`${b.name}|${b.ha}|${b.year}`] = true; });
+  const counted = B.blocks.filter(b => !zero[`${b.name}|${b.ha}|${b.year}`]);
+  const known = counted.filter(b => b.age !== null && b.age >= 3);
   const areaKnown = known.reduce((s, b) => s + b.ha, 0);
   if (!areaKnown) return null;
   const wavg = (c, k) => known.reduce((s, b) => s + b.ha * marihatAt(b.age, c)[k], 0) / areaKnown;
@@ -81,8 +84,9 @@ function buildMarihat(d) {
   // Luas: total blok unik. Jika jauh lebih kecil dari luas panen bulanan (daftar blok tidak lengkap), pakai median luas panen.
   const lp = d.luasPanen.filter(x => x.value !== null).map(x => x.value).sort((a, b) => a - b);
   const lpMed = lp.length ? lp[Math.floor(lp.length / 2)] : 0;
-  const areaFromBlocks = B.totalHa >= lpMed * 0.8 || !lpMed;
-  const area = areaFromBlocks ? B.totalHa : lpMed;
+  const blockHa = counted.reduce((s, b) => s + b.ha, 0);
+  const areaFromBlocks = blockHa >= lpMed * 0.8 || !lpMed;
+  const area = areaFromBlocks ? blockHa : lpMed;
   const realTonYear = (tonSum / nMonths) * 12;
   const realTonHa = realTonYear / area;
   const realBjr = usePanen ? d.bjrSoldCum : (jjgSum ? (tonSum * 1000) / jjgSum : null);
@@ -104,7 +108,7 @@ function buildMarihat(d) {
   }).filter(Boolean);
 
   return {
-    cls, area, areaKnown, areaFromBlocks, nMonths, annualized: nMonths < 12, usePanen, soldTonYear,
+    cls, area, areaKnown, areaFromBlocks, zeroHa: B.zeroJjgHa || 0, reliable: nMonths >= DECK_CONFIG.THRESHOLDS.MIN_MONTHS_ANNUAL, nMonths, annualized: nMonths < 12, usePanen, soldTonYear,
     pot, potS1, realTonHa, realTonYear, potTonYear, realBjr, realRjt, realJjgHa,
     achTon: realTonHa / pot.ton, achBjr: realBjr ? realBjr / pot.rbt : null, achJjg: realJjgHa ? realJjgHa / pot.jjgHa : null, achRjt: realRjt ? realRjt / pot.rjt : null,
     gapTon, gapRp: avgPrice ? gapTon * 1000 * avgPrice : null, avgPrice, byClass
@@ -116,7 +120,7 @@ function describeMarihat(d) {
   if (!M) return 'Standar Marihat: tidak dapat dihitung (daftar blok/tahun tanam belum tersedia).';
   const L = [
     `STANDAR MARIHAT (PPKS, Permentan 131/2013 Tabel 3), kelas lahan ${M.cls}${d.landClassAssumed ? ' (ASUMSI, kelas lahan tidak dicatat di sheet)' : ''}:`,
-    M.areaFromBlocks ? `- Luas blok unik yang dipanen: ${fmt(M.area, 1)} ha (${fmt(M.areaKnown, 1)} ha dengan tahun tanam ≥ 3 tahun dipakai untuk potensi).`
+    M.areaFromBlocks ? `- Luas blok unik yang dipanen: ${fmt(M.area, 1)} ha (${fmt(M.areaKnown, 1)} ha dengan tahun tanam ≥ 3 tahun dipakai untuk potensi)${M.zeroHa ? `; ${fmt(M.zeroHa, 1)} ha blok yang janjangnya 0 di semua bulan tidak dihitung` : ''}.`
       : `- PERLU DICEK: total luas di daftar blok lebih kecil dari luas panen bulanan; perhitungan memakai median luas panen ${fmt(M.area, 1)} ha. Lengkapi daftar blok.`,
     M.usePanen ? `- Dasar realisasi: estimasi produksi panen = janjang dipanen × BJR berbasis janjang terjual (${fmt(M.realBjr, 1)} kg), karena tonase di sheet adalah ton TERJUAL. TBS terjual setahun ${fmt(M.soldTonYear, 0)} ton.` : '',
     `- Realisasi produktivitas: ${fmt(M.realTonHa, 1)} ton TBS/ha/tahun (${M.annualized ? `disetahunkan dari ${M.nMonths} bulan` : `${M.nMonths} bulan`}) vs potensi ${fmt(M.pot.ton, 1)} ton/ha/tahun → pencapaian ${fmtPct(M.achTon * 100, 0)} (potensi kelas S1: ${fmt(M.potS1, 1)}).`,
