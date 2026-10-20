@@ -380,7 +380,7 @@ function loadClaudeAnswer(sheet, data, plan) {
     RUN_WARNINGS.push(`Hanya ${usable.length} dari ${packet.blocks.length} blok jawaban terbaca (sel ${packet.cells.join(', ')}); bagian yang kosong memakai teks otomatis.`);
   }
 
-  let out = merged.out;
+  let out = cleanAiArtifacts(merged.out);
   const aliasMap = (DECK_CONFIG.SECURITY || {}).ANONYMIZE_FOR_AI ? buildAliasMap(data) : [];
   if (aliasMap.length) out = restoreAliases(out, aliasMap);
   return { ai: normalizeAiAnswer(out, plan) };
@@ -667,17 +667,33 @@ function applyAliases(text, map) {
   return t;
 }
 
+/**
+ * Bersihkan sisa format chat AI di semua teks jawaban: penanda sitasi ("[cite: 2]", "[cite_start]", "【4†source】"),
+ * spasi ganda, dan spasi sebelum tanda baca yang tertinggal setelah penanda dibuang.
+ */
+function cleanAiArtifacts(obj) {
+  const fix = s => s.replace(/[ \t]*\[cite(?:_start|_end)?(?::[^\]]*)?\][ \t]*/gi, ' ').replace(/[ \t]*【[^】]*】[ \t]*/g, ' ')
+    .replace(/[ \t]{2,}/g, ' ').replace(/ +([.,;:!?)])/g, '$1').replace(/ +\n/g, '\n').trim();
+  const walk = v => Array.isArray(v) ? v.map(walk)
+    : (v && typeof v === 'object') ? Object.keys(v).reduce((o, k) => { o[k] = walk(v[k]); return o; }, {})
+    : (typeof v === 'string' ? fix(v) : v);
+  return walk(obj);
+}
+
 /** Kembalikan alias -> nama asli di semua string dalam objek jawaban AI. */
 function restoreAliases(obj, map) {
   const uniq = {};
   map.forEach(m => { if (!(m.alias in uniq)) uniq[m.alias] = m.real; });
   const keys = Object.keys(uniq).sort((a, b) => b.length - a.length);
-  const fix = s => keys.reduce((t, a) => t.replace(new RegExp(escapeRe(a), 'gi'), uniq[a]), s);
+  // Alias bisa ditulis ulang oleh AI: "KEBUN_X", "Kebun X", "KebunX", "Blok N01" -> semuanya dikembalikan
+  const aliasRe = a => { const m = a.match(/^([A-Z]+)_([A-Z0-9]+)$/);
+    return new RegExp(m ? `\\b${m[1]}[_ ]?${m[2]}\\b` : escapeRe(a), 'gi'); };
+  const fix = s => keys.reduce((t, a) => t.replace(aliasRe(a), uniq[a]), s);
   const walk = v => Array.isArray(v) ? v.map(walk)
     : (v && typeof v === 'object') ? Object.keys(v).reduce((o, k2) => { o[k2] = walk(v[k2]); return o; }, {})
     : (typeof v === 'string' ? fix(v) : v);
   const out = walk(obj);
-  const left = JSON.stringify(out).match(/\b(KEBUN_[XS]|LOKASI_X|MANDOR_[A-Z]\d*|BLOK_N\d{2})\b/);
+  const left = JSON.stringify(out).match(/\b(KEBUN[_ ]?[XS]|LOKASI[_ ]?X|MANDOR_[A-Z]\d*|BLOK[_ ]?N\d{2})\b/i);
   if (left) RUN_WARNINGS.push(`Sebagian alias penyamaran (${left[0]}) tidak bisa dikembalikan; cek teks deck.`);
   return out;
 }

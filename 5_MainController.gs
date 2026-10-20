@@ -55,7 +55,9 @@ function generateCustomerDeck() {
   const presId = newFile.getId();
   let pres = SlidesApp.openById(presId);
 
-  ['{{TITLE}}', '{{title}}'].forEach(p => pres.replaceAllText(p, data.title || data.sheetName));
+  const coverTitle = data.title || data.sheetName;
+  ['{{TITLE}}', '{{title}}'].forEach(p => pres.replaceAllText(p, coverTitle));
+  fitCoverTitle(pres, coverTitle);
   const coverPeriod = (DECK_CONFIG.COVER_PERIOD_SOURCE === 'data' && data.dataPeriod) ? data.dataPeriod : (data.period || data.dataPeriod || '');
   ['{{PERIOD}}', '{{period}}'].forEach(p => pres.replaceAllText(p, coverPeriod || '-'));
   if (data.location) pres.replaceAllText('{{location}}', data.location);
@@ -685,7 +687,7 @@ function buildTopics(d) {
       B.replant.slice(0, 10).map(b => `- ${b.name}: ${fmt(b.ha, 2)} ha, tanam ${b.year}, umur ${b.age} th, dipanen ${b.months} dari ${B.monthly.length} bulan`).join('\n'),
     fallback: `${B.replant.length} blok seluas ${fmt(B.replant.reduce((s, b) => s + b.ha, 0), 1)} ha sudah berumur lebih dari 25 tahun; blok terluas ${B.replant[0].name} (${fmt(B.replant[0].ha, 2)} ha, tanam ${B.replant[0].year}).`,
     draw: b => drawTable(b, ['Blok', 'Luas\nha', 'Tahun\ntanam', 'Umur\ntahun', 'Dipanen\nbulan'],
-      B.replant.slice(0, 9).map(x => [x.name, fmt(x.ha, 2), String(x.year), String(x.age), `${x.months}/${B.monthly.length}`]),
+      B.replant.slice(0, 9).map(x => [x.name, x.ha ? fmt(x.ha, 2) : '–', String(x.year), String(x.age), `${x.months}/${B.monthly.length}`]),
       { colWidths: [2.6, 1.5, 1.6, 1.4, 1.6], fontSize: DECK_CONFIG.TYPE.TABLE_CELL, headerSize: DECK_CONFIG.TYPE.TABLE_HEADER, rowHeight: 25, headerHeight: 36, numCols: [1, 2, 3, 4] })
   });
 
@@ -779,7 +781,7 @@ function buildTopics(d) {
             up.length ? describeUpkeep(up, d.upkeepPeriod) : ''].join('\n'),
     fallback: fallbackInsight('Pendapatan per hektar', '', d.revHa, fmtRp),
     draw: b => drawBarChart(b, d.revHa, {
-      scale: 1e6, labelFmt: f2, axisFmt: v => `${fmt(v, 0)} jt`,
+      scale: 1e6, labelFmt: f2, axisFmt: jtAxis,
       extraLines: has(d.costHa) ? [{ series: d.costHa, color: C.DANGER, dashed: true }] : [],
       legend: [{ name: 'Pendapatan/ha (Rp jt)', type: 'bar', color: C.GREEN }].concat(has(d.costHa) ? [{ name: 'Biaya/ha', color: C.DANGER, dashed: true }] : []) })
   });
@@ -789,7 +791,7 @@ function buildTopics(d) {
     visual: 'bar margin per ha (pendapatan - biaya, Rp jt); bulan negatif berwarna merah',
     facts: describeSeries('Margin per ha (pendapatan - biaya)', '', d.margin, fmtRp),
     fallback: fallbackInsight('Margin per hektar', '', d.margin, fmtRp),
-    draw: b => drawBarChart(b, d.margin, { scale: 1e6, labelFmt: f2, axisFmt: v => `${fmt(v, 0)} jt` })
+    draw: b => drawBarChart(b, d.margin, { scale: 1e6, labelFmt: f2, axisFmt: jtAxis })
   });
 
   const rawatEmpty = !d.rawat || !d.rawat.rows.length;
@@ -873,11 +875,11 @@ function buildTopics(d) {
       : 'tabel blok yang paling sering tidak tercatat menjual janjang: blok, luas, tahun tanam, jumlah bulan tanpa penjualan, bulan terakhir',
     facts: describeUnsale(d),
     fallback: U.jjgTotal
-      ? `${fmt(U.jjgTotal, 0)} janjang dipanen di blok yang tidak tercatat menjual selama periode; terbanyak ${U.blocks[0].name} (${fmt(U.blocks[0].ha, 2)} ha) ${fmt(U.blocks[0].jjg, 0)} janjang dalam ${U.blocks[0].months} bulan.`
-      : `${U.chronic.length || U.blocks.length} blok tidak tercatat menjual janjang selama beberapa bulan; terbanyak ${U.blocks[0].name} (${fmt(U.blocks[0].ha, 2)} ha) ${U.blocks[0].months} dari ${U.months} bulan.`,
+      ? `${fmt(U.jjgTotal, 0)} janjang dipanen di blok yang tidak tercatat menjual selama periode; terbanyak ${U.blocks[0].name}${U.blocks[0].ha ? ` (${fmt(U.blocks[0].ha, 2)} ha)` : ''} ${fmt(U.blocks[0].jjg, 0)} janjang dalam ${U.blocks[0].months} bulan.`
+      : `${U.chronic.length || U.blocks.length} blok tidak tercatat menjual janjang selama beberapa bulan; terbanyak ${U.blocks[0].name}${U.blocks[0].ha ? ` (${fmt(U.blocks[0].ha, 2)} ha)` : ''} ${U.blocks[0].months} dari ${U.months} bulan.`,
     // janjang per blok tersedia: kolom terakhir = janjang dipanen tanpa penjualan tercatat (bukan bulan terakhir)
     draw: b => drawTable(b, ['Blok', 'Luas\nha', 'Tahun\ntanam', 'Tanpa penjualan\nbulan', U.jjgTotal ? 'Janjang\ndipanen' : 'Terakhir\nbulan'],
-      U.blocks.slice(0, 9).map(x => [x.name, fmt(x.ha, 2), x.year ? String(x.year) : '-', `${x.months}/${U.months}`, U.jjgTotal ? fmt(x.jjg, 0) : (x.last ? monthShort(x.last) : '-')]),
+      U.blocks.slice(0, 9).map(x => [x.name, x.ha ? fmt(x.ha, 2) : '–', x.year ? String(x.year) : '-', `${x.months}/${U.months}`, U.jjgTotal ? fmt(x.jjg, 0) : (x.last ? monthShort(x.last) : '-')]),
       { colWidths: [2.4, 1.3, 1.3, 1.8, 1.4], fontSize: DECK_CONFIG.TYPE.TABLE_CELL, headerSize: DECK_CONFIG.TYPE.TABLE_HEADER, rowHeight: 25, headerHeight: 36, numCols: U.jjgTotal ? [1, 2, 3, 4] : [1, 2, 3] })
   });
 
@@ -897,7 +899,7 @@ function buildTopics(d) {
             has(d.profit) ? describeSeries('Laba kotor sebelum biaya material (pendapatan − biaya pekerja)', '', d.profit, fmtRp) : '',
             (d.featureNotes || []).length ? 'CATATAN FITUR: ' + d.featureNotes.join('; ') : ''].join('\n'),
     fallback: fallbackInsight('Total biaya pekerja', '', d.costTotal, fmtRp),
-    draw: b => drawStackedBarChart(b, costParts, { scale: 1e6, labelFmt: f1, axisFmt: v => `${fmt(v, 0)} jt` })
+    draw: b => drawStackedBarChart(b, costParts, { scale: 1e6, labelFmt: f1, axisFmt: jtAxis })
   });
 
   T.push({ id: 'anomali', kind: 'anomali', title: 'Anomali yang Perlu Ditindaklanjuti',
@@ -1007,6 +1009,26 @@ const MAIN_GROUPS = [
   { id: 'm_tim', title: 'Tim Kerja', members: ['mandorpanen', 'mandormuat', 'rawat'], chart: ['mandorpanen', 'mandormuat', 'rawat'],
     question: 'Apakah tim panen, muat, dan rawat bekerja cukup produktif dan merata?' }
 ];
+
+/** Label sumbu Rp juta: desimal secukupnya agar nilai kecil (mis. 0,35 jt) tidak semua terbaca "0 jt". */
+function jtAxis(v) {
+  const a = Math.abs(v);
+  return `${fmt(v, !a || Number.isInteger(Math.round(v * 100) / 100) ? 0 : a < 1 ? 2 : a < 10 ? 1 : 0)} jt`;
+}
+
+/** Nama kebun panjang di cover diperkecil agar tetap satu baris (tidak menimpa label dan baris periode). */
+function fitCoverTitle(pres, title) {
+  const cover = pres.getSlides()[0];
+  if (!cover) return;
+  const T = DECK_CONFIG.TYPE;
+  cover.getShapes().forEach(sh => {
+    let txt = '';
+    try { txt = sh.getText().asString().trim(); } catch (e) { return; }
+    if (txt !== String(title).trim()) return;
+    const need = estWidth(title, T.COVER_NAME, true), room = sh.getWidth() - 8;
+    if (need > room) sh.getText().getTextStyle().setFontSize(Math.max(T.COVER_NAME_MIN, Math.floor(T.COVER_NAME * room / need)));
+  });
+}
 
 /**
  * GRAFIK KESIMPULAN slide utama (dibaca owner dalam ±30 detik): 3–4 indikator kunci, bulan laporan berdampingan dengan

@@ -506,11 +506,17 @@ function drawAnomalyTable(b, rows, linkOf) {
   // Tabel lebar penuh; tinggi baris diperkirakan dari isi sel terpanjang (baris tabel ikut membesar di Slides)
   const T = DECK_CONFIG.TYPE, totalW = L.RIGHT - L.MARGIN, ratios = [1.6, 2.2, 2.3, 2.0], sum = 8.1;
   const cellW = ratios.map(r => totalW * r / sum - 2 * 7.9);
-  const rowH = data.slice(1).map(row => Math.max.apply(null, row.map((c, j) => estLines(c, T.TABLE_CELL, cellW[j], j === 0) * T.TABLE_CELL * 1.35)) + 13.5);
-  const total = 25 + rowH.reduce((a, x) => a + x, 0);
+  // Semua baris setinggi baris terpanjang; huruf diperkecil bertahap sampai tabel muat di atas footer
+  let fs = T.TABLE_CELL, rowH, total;
+  const measure = () => {
+    rowH = Math.max.apply(null, data.slice(1).map(row => Math.max.apply(null, row.map((c, j) => estLines(c, fs, cellW[j], j === 0) * fs * 1.35)) + 13.5));
+    total = 25 + rowH * (data.length - 1);
+  };
+  measure();
+  while (L.BODY_TOP + total > L.BOTTOM && fs > T.TABLE_CELL_MIN) { fs -= 0.5; measure(); }
   if (L.BODY_TOP + total > L.BOTTOM) RUN_WARNINGS.push('Tabel anomali mungkin melebihi tinggi slide; isi anomali perlu dipersingkat.');
-  b.table(L.MARGIN, L.BODY_TOP, totalW, data, { colWidths: ratios, fontSize: T.TABLE_CELL, headerSize: T.TABLE_HEADER,
-    rowHeight: Math.max.apply(null, rowH), headerHeight: 25, rowLinks: links });
+  b.table(L.MARGIN, L.BODY_TOP, totalW, data, { colWidths: ratios, fontSize: fs, headerSize: T.TABLE_HEADER,
+    rowHeight: rowH, headerHeight: 25, rowLinks: links });
 }
 
 /* ------------------------------------------------------------------------- */
@@ -716,7 +722,8 @@ function drawCompareRows(b, s) {
     b.rect(x0, curY, wc, 13, curColor);
     b.label(f(r.cur), x0 + wc + 4, curY - 0.5, valW, { align: 'START', weight: W.HEAVY, color: curColor });
     // Selisih % (warna mengikuti arti baik/buruk, selalu disertai tanda panah)
-    const dTxt = delta === null ? '–' : `${delta >= 0 ? '▲' : '▼'} ${fmt(Math.abs(delta), 0)}%`;
+    // Kenaikan dari pembanding yang sangat kecil (> 5 kali) ditulis "17×", bukan persen ribuan
+    const dTxt = delta === null ? '–' : delta > 400 && r.ref > 0 ? `▲ ${fmt(r.cur / r.ref, 0)}×` : `${delta >= 0 ? '▲' : '▼'} ${fmt(Math.abs(delta), 0)}%`;
     b.text(dTxt, A.left + A.width - deltaW, y + rowH / 2 - 8, deltaW, 16, { size: T.BODY, weight: W.HEAVY,
       color: good === null ? C.INK : good ? C.GREEN : C.DANGER, align: 'END', valign: 'MIDDLE', noGroup: true, nowrap: true });
   });
@@ -869,7 +876,11 @@ function drawAgenda(b, items, outcomes) {
     b.rect(left + P, cy - d / 2, d, d, C.GREEN, 'ELLIPSE', true);
     b.text(String(i + 1), left + P + d / 2 - 16, cy - d / 2, 32, d, { weight: W.HEAVY, size: T.TOC_TITLE, color: C.ON_GREEN, noGroup: true, nowrap: true });
     const tH = T.CARD_TITLE * 1.25;
-    const dLines = it.desc ? Math.min(2, estLines(it.desc, T.BODY, textW)) : 0, dH = dLines * T.BODY * 1.35;
+    // Deskripsi satu baris: huruf diperkecil bila perlu, lalu dipotong dengan "…" bila tetap tidak muat
+    let dSize = T.BODY, desc = it.desc || '';
+    while (desc && dSize > T.CAPTION && estWidth(desc, dSize) > textW) dSize -= 0.5;
+    if (desc && estWidth(desc, dSize) > textW) desc = desc.slice(0, Math.max(10, Math.floor(textW / (dSize * DECK_CONFIG.CHAR_W.BODY)) - 1)).replace(/\s+\S*$/, '') + '…';
+    const dLines = desc ? 1 : 0, dH = dLines * dSize * 1.35;
     const bh = tH + (dH ? 2 + dH : 0);
     if (estWidth(it.title, T.CARD_TITLE, true) > textW) RUN_WARNINGS.push(`Agenda "${it.title}" terlalu panjang untuk satu baris.`);
     if (bh + 10 > rowH) RUN_WARNINGS.push(`Deskripsi agenda "${it.title}" terlalu panjang; persingkat menjadi satu baris.`);
@@ -877,7 +888,7 @@ function drawAgenda(b, items, outcomes) {
     if (it.pageId) b.req.push({ updateTextStyle: { objectId: tId, textRange: { type: 'ALL' },
       style: { link: { pageObjectId: it.pageId }, underline: false, foregroundColor: { opaqueColor: { rgbColor: hexToRgb(C.INK) } } },
       fields: 'link,underline,foregroundColor' } });
-    if (it.desc) b.text(it.desc, left + textX, cy - bh / 2 + tH + 2, textW, dH, { size: T.BODY, color: C.MUTED, align: 'START', valign: 'TOP', lineSpacing: 120, noGroup: true });
+    if (desc) b.text(desc, left + textX, cy - bh / 2 + tH + 2, textW, dH, { size: dSize, color: C.MUTED, align: 'START', valign: 'TOP', lineSpacing: 120, noGroup: true, nowrap: true });
     if (it.minutes) b.text(`${it.minutes} mnt`, left + A.width - P - minW, cy - 8, minW, 16, { size: T.CAPTION, weight: W.HEAVY, color: C.INK, align: 'END', valign: 'MIDDLE', noGroup: true, nowrap: true });
   });
 
@@ -886,17 +897,20 @@ function drawAgenda(b, items, outcomes) {
   if (!oc.length) return;
   const total = list.reduce((a, it) => a + (Number(it.minutes) || 0), 0);
   const numW = 14, innerW = I.width - 2 * I.padX - numW;
-  const lines = oc.map(o => estLines(o, T.BODY, innerW));
   const labelH = T.EYEBROW * 1.3 + 6.75, itemGap = 6.75, totalH = total ? 9 + T.CAPTION * 1.4 : 0;
-  const need = I.padTop + labelH + lines.reduce((a, n) => a + n * T.BODY * 1.45, 0) + itemGap * (oc.length - 1) + totalH + I.padBottom;
+  // Ukuran huruf diperkecil bertahap sampai semua hasil yang dituju muat di kartu
+  let fs = T.BODY, lines, need;
+  const measure = () => { lines = oc.map(o => estLines(o, fs, innerW)); need = I.padTop + labelH + lines.reduce((a, n) => a + n * fs * 1.45, 0) + itemGap * (oc.length - 1) + totalH + I.padBottom; };
+  measure();
+  while (need > avail && fs > T.CAPTION) { fs -= 0.5; measure(); }
   if (need > avail) RUN_WARNINGS.push('Kartu "Hasil yang dituju" terlalu panjang; persingkat hasil yang dituju.');
   b.card(I.left, top0, I.width, Math.min(avail, need), { fill: C.YELLOW_TINT || '#fff8d6', border: C.YELLOW });
   b.text('HASIL YANG DITUJU', I.left + I.padX, top0 + I.padTop, I.width - 2 * I.padX, T.EYEBROW * 1.3, { size: T.EYEBROW, weight: W.HEAVY, color: C.GREEN, align: 'START', valign: 'TOP', noGroup: true });
   let y = top0 + I.padTop + labelH;
   oc.forEach((o, i) => {
-    const h = lines[i] * T.BODY * 1.45;
-    b.text(`${i + 1}.`, I.left + I.padX, y, numW, T.BODY * 1.45, { size: T.BODY, weight: W.HEAVY, color: C.INK, align: 'START', valign: 'TOP', noGroup: true, nowrap: true });
-    b.text(o, I.left + I.padX + numW, y, innerW, h, { size: T.BODY, color: C.INK, align: 'START', valign: 'TOP', lineSpacing: 135, noGroup: true });
+    const h = lines[i] * fs * 1.45;
+    b.text(`${i + 1}.`, I.left + I.padX, y, numW, fs * 1.45, { size: fs, weight: W.HEAVY, color: C.INK, align: 'START', valign: 'TOP', noGroup: true, nowrap: true });
+    b.text(o, I.left + I.padX + numW, y, innerW, h, { size: fs, color: C.INK, align: 'START', valign: 'TOP', lineSpacing: 135, noGroup: true });
     y += h + itemGap;
   });
   if (total) b.text(`Durasi total ${total} menit`, I.left + I.padX, y - itemGap + 9, I.width - 2 * I.padX, T.CAPTION * 1.4, { size: T.CAPTION, weight: W.STRONG, color: C.MUTED, align: 'START', valign: 'TOP', noGroup: true, nowrap: true });

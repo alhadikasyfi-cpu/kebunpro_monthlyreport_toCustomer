@@ -680,7 +680,7 @@ function seriesStats(series) {
   const byYear = {};
   pts.forEach(s => { (byYear[s.p.y] = byYear[s.p.y] || []).push(s); });
   return {
-    n: series.length, avg, sd, max, min,
+    n: pts.length, avg, sd, max, min,   // n = jumlah bulan yang berisi data (bulan kosong tidak dihitung)
     sum: vals.reduce((a, b) => a + b, 0),
     first: pts[0], last: pts[pts.length - 1],
     prev: pts.length > 1 ? pts[pts.length - 2] : null,
@@ -782,6 +782,7 @@ function signalSentence(name, unit, series, f) {
   if (!st) return `Data ${name.toLowerCase()} belum tersedia pada periode ini.`;
   if (st.allZero) return `${name} tercatat nol di seluruh periode, kemungkinan karena kendala input data, sehingga belum dapat dianalisis.`;
   const u = unit ? ` ${unit}` : '';
+  if (st.n === 1) return `${name} baru tercatat pada ${monthLong(st.last.p)} (${f(st.last.value)}${u}); bulan lain belum diisi, jadi trennya belum dapat dilihat.`;
   if (st.constant || st.max.value === st.min.value) return `${name} tetap ${f(st.first.value)}${u} di seluruh periode ${monthLong(series[0].p)}–${monthLong(series[series.length - 1].p)}.`;
   let t = `${name} ${TREND_PHRASE[g.trend]} selama periode ini, tertinggi ${f(st.max.value)}${u} pada ${monthLong(st.max.p)} dan terendah ${f(st.min.value)}${u} pada ${monthLong(st.min.p)}.`;
   if (g.position !== 'data kurang') t += ` ${monthLong(st.last.p)} tercatat ${f(st.last.value)}${u}, ${g.position}.`;

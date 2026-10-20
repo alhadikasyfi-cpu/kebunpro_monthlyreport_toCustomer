@@ -441,6 +441,29 @@ const DB = run2('loadSheetData(sheetB)');
 ok(DB.bjr.every(x => x.value === null || x.value <= 35) && DB.zeroFixes.some(z => /BJR tidak wajar \(di atas 35 kg\)/.test(z) && /40,5 kg/.test(z)),
   'BJR 40,5 kg ditandai tidak wajar dan tidak dipakai untuk tonase/rupiah');
 
+// 10e. Sisa format chat AI: penanda sitasi dibuang, alias yang ditulis ulang ("Kebun X") tetap dikembalikan ke nama asli
+ok(run2(`cleanAiArtifacts({ a: 'laba Rp7,9 juta[cite: 2], namun [cite_start]data blok[cite: 2].\\nBaris kedua【4†source】.' }).a`) === 'laba Rp7,9 juta, namun data blok.\nBaris kedua.' &&
+   run2(`restoreAliases({ a: 'Kinerja Kebun X dan KEBUN_X; Blok N01 oleh MANDOR_A' }, [{ real: 'KT Segati Kiri', alias: 'KEBUN_X' }, { real: 'L2 Robert', alias: 'BLOK_N01' }, { real: 'Ador', alias: 'MANDOR_A' }]).a`) === 'Kinerja KT Segati Kiri dan KT Segati Kiri; L2 Robert oleh Ador',
+  'penanda "[cite: 2]" dibuang; "Kebun X" dikembalikan ke nama kebun asli');
+
+// 10f. Kerapian slide: baris teks dihitung per kata, nama kebun panjang di cover diperkecil, tabel temuan muat, sumbu Rp kecil
+ok(run2(`estLines('Kesepakatan prioritas pembenahan administrasi timbang dan rekonsiliasi alur janjang', 10.1, 162.25)`) === 4,
+  'perkiraan baris memakai pemotongan per kata (cocok dengan tampilan kartu Hasil yang dituju: 4 baris)');
+const coverShape = { size: null, getText: () => ({ asString: () => 'Business Farm Estate KT Segati Kiri', getTextStyle: () => ({ setFontSize: v => { coverShape.size = v; } }) }), getWidth: () => 600 };
+ctx2.presMock = { getSlides: () => [{ getShapes: () => [coverShape] }] };
+run2(`fitCoverTitle(presMock, 'Business Farm Estate KT Segati Kiri')`);
+ok(coverShape.size >= 20 && coverShape.size < 36 && run2(`estWidth('Business Farm Estate KT Segati Kiri', ${coverShape.size}, true)`) <= 592,
+  `nama kebun panjang di cover diperkecil ke ${coverShape.size} pt agar satu baris`);
+ok(run2('jtAxis(0.35)') === '0,35 jt' && run2('jtAxis(100)') === '100 jt', 'sumbu Rp juta untuk nilai kecil tidak lagi "0 jt"');
+ok(/baru tercatat pada September 2026/.test(run2(`signalSentence('Produksi TBS', 'ton', [{ p: { y: 2026, m: 5 }, value: null }, { p: { y: 2026, m: 8 }, value: 6.3 }], v => fmt(v, 1))`)),
+  'satu bulan data: insight "baru tercatat", bukan "tetap ... di seluruh periode"');
+const longRows = [1, 2, 3, 4].map(i => ({ finding: 'Profil luas 24 blok belum tercatat di aplikasi KebunPRO', evidence: '24 blok tercatat 0,0 ha di KebunPRO sejak Juni hingga September 2026',
+  argument: 'Metrik yield ton/ha dan dosis pupuk presisi tidak dapat dihitung untuk blok mana pun', follow_up: 'Pengukuran luas dan analisis tanah · PIC: Tim SawitPRO · tenggat 30 Nov · Solusi SawitPRO: Uji Tanah Dokter Sawit', pages: [] }));
+ctx2.longRows = longRows;
+const anomFs = run2(`(function(){ RUN_WARNINGS = []; const b = new SlideBatch('pg','an'); drawAnomalyTable(b, longRows, null);
+  const f = b.req.filter(r => r.updateTextStyle && r.updateTextStyle.style && r.updateTextStyle.style.fontSize).map(r => r.updateTextStyle.style.fontSize.magnitude); return { min: Math.min.apply(null, f), warn: RUN_WARNINGS.join(' ') }; })()`);
+ok(anomFs.min < 10.1 && !/melebihi tinggi slide/.test(anomFs.warn), `tabel temuan panjang: huruf diperkecil ke ${anomFs.min} pt agar tidak terpotong footer`);
+
 // 11. Produksi per blok (janjang dipanen per blok) + kaitan dengan status pupuk
 const pb = run2(`parseBlocks('F10, 3.39 ha, 2012, -, 342; B8, 1.49 ha, 2017, -; Blok Pasar Bingung, 5 ha, 2009, Gambut, 1084')`);
 ok(pb[0].jjg === 342 && pb[0].soil === null && pb[1].jjg === null && pb[2].soil === 'Gambut' && pb[2].jjg === 1084,

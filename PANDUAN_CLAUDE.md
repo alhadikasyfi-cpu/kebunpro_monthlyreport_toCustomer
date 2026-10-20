@@ -156,6 +156,8 @@ Blok UTAMA:
 - Bila paket menulis TIDAK KONSISTEN antara dua tabel, sebut sebagai catatan pencatatan yang perlu disamakan; jangan memilih salah satu angka seolah pasti.
 - Bila tertulis "kebocoran TIDAK BISA DIUKUR", jangan menulis kebocoran 0% atau "tidak ada kebocoran"; jelaskan bahwa janjang terjual melebihi janjang dipanen karena pencatatan panen belum lengkap.
 - Jika suatu data tidak ada, tulis "belum tersedia" dan jangan menebak isinya.
+- Tulis alias penyamaran PERSIS seperti di paket (KEBUN_X, LOKASI_X, MANDOR_A, BLOK_N01), jangan diubah menjadi "Kebun X" atau bentuk lain; script mengembalikannya ke nama asli.
+- JANGAN menulis penanda sumber/sitasi apa pun (mis. "[cite: 2]", "[cite_start]", "【1】") atau catatan kaki di teks jawaban; teks langsung tampil di slide.
 - SATU PAKET = SATU KEBUN: setiap angka HANYA boleh diambil dari paket yang sedang dikerjakan (cocokkan ID_PAKET). Jangan memakai angka, nama blok, atau luas dari paket kebun lain yang pernah ditempel di chat ini, walaupun datanya kosong. Bila paket menulis luas blok belum tercatat, tulis "luas belum tercatat" tanpa angka ha.
 - Satu metrik/bulan = satu kesimpulan di seluruh deck. Jika data tidak konsisten (lihat KONSISTENSI), sebutkan sekali di slide terkait dan pakai versi yang sama di slide lain.
 - Jangan memperkenalkan faktor yang belum dibahas di slide sebelumnya tanpa menyebut bahwa itu akan dibahas di slide berikutnya.

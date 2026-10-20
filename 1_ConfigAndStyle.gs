@@ -209,12 +209,14 @@ const DECK_CONFIG = {
     TABLE_HEADER: 10.1,   // table-head 18px
     TABLE_SMALL: 7.9,     // keterangan kecil di header tabel 14px
     TABLE_CELL: 10.1,     // body 18px
+    TABLE_CELL_MIN: 8,       // tabel padat (mis. temuan) boleh diperkecil sampai ukuran ini agar tidak melewati footer
     META: 12.4,           // meta 22px (cover)
     LEAD: 11.25,          // body-lg / sp-lead 20px
     BODY: 10.1,           // body 18px (isi kartu, insight)
     CAPTION: 8.4,         // caption / legenda 15px
     PILL: 8.4,            // pill 15px ExtraBold
     COVER_NAME: 36,
+    COVER_NAME_MIN: 20,      // nama kebun panjang diperkecil sampai ukuran ini agar tetap satu baris
     FOOTER: 7.9           // footer 14px
   },
   // Jarak dalam bawaan kotak teks Google Slides; dikompensasi agar teks tepat di posisi rancangan
@@ -428,7 +430,16 @@ function addSlideTitle(slide, text) {
 function estLines(text, size, width, heavy) {
   const cw = size * (heavy ? DECK_CONFIG.CHAR_W.HEAVY : DECK_CONFIG.CHAR_W.BODY);
   const perLine = Math.max(1, Math.floor(width / cw));
-  return String(text || '').split('\n').reduce((n, para) => n + Math.max(1, Math.ceil(para.length / perLine)), 0);
+  // Simulasi pemotongan per kata (bukan per huruf): kata yang tidak muat pindah utuh ke baris berikutnya
+  return String(text || '').split('\n').reduce((n, para) => {
+    let lines = 1, cur = 0;
+    para.split(/\s+/).filter(Boolean).forEach(w => {
+      const len = w.length;
+      if (cur && cur + 1 + len > perLine) { lines++; cur = 0; }
+      if (len > perLine) { lines += Math.ceil(len / perLine) - 1; cur = len % perLine; } else cur += (cur ? 1 : 0) + len;
+    });
+    return n + lines;
+  }, 0);
 }
 /** Perkiraan lebar teks satu baris (pt). */
 function estWidth(text, size, heavy) {
