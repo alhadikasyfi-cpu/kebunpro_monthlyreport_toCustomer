@@ -122,6 +122,7 @@ const DECK_CONFIG = {
     BLOCK_LOW_ACH: 0.6,         // janjang/pokok/tahun blok < 60% standar Marihat umurnya -> blok berproduktivitas rendah
     BLOCK_REGULAR: 0.7,         // blok dipanen ≥ 70% bulan periode = panen teratur (rendahnya bukan karena rotasi)
     BLOCK_VERY_LOW_ACH: 0.1,    // janjang/ha < 10% standar -> selain penyebab di lapangan, luas blok juga perlu dicek
+    BJR_MAX_KG: 35,             // BJR > 35 kg tidak wajar (standar Marihat tertinggi ±35 kg) -> salah catat/sampel timbang terlalu kecil
     BJR_MAX_NOWEIGHT_PCT: 50,   // > 50% janjang terjual tanpa berat -> BJR dari sampel terlalu kecil, tidak jadi dasar status pupuk
     MIN_MONTHS_ANNUAL: 6,       // < 6 bulan data: angka per tahun hanya indikatif (musim panen: Jun–Sep ±38–40% panen setahun), penyebab blok rendah belum disimpulkan
     BLOCK_SUSPECT_ACH: 2.0,     // janjang/ha > 200% standar -> kemungkinan salah luas/nama blok, dikeluarkan dari analisis blok

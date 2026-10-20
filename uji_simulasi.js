@@ -420,6 +420,27 @@ const missMsg = run2(`(function(){ const f = buildBlockProduction; buildBlockPro
 ok(/10_ProduksiBlok\.gs/.test(missMsg) && !/9_TanahPupuk/.test(missMsg) && run2('checkProjectFiles()') === undefined,
   `file belum lengkap -> pesan jelas: "${missMsg.slice(0, 70)}..."`);
 
+// 10d. Sheet seperti KT Segati: semua blok 0 ha, bulan Agustus tidak ada, BJR 40 kg dari sedikit janjang ditimbang
+const BZ = run2(`buildBlockAnalytics({ totalJjg: [], blocksRaw: [{ p: { y: 2026, m: 8 }, label: 'x', value: 'TAUNAN 1, 0 ha, 2009, -, 72; SEMUTAN, 0 ha, 2009, Gambut, 89' }] })`);
+ctx2.dZ = { blocks: BZ, unsale: null };
+const SZ = run2('buildSoilAnalytics(dZ)');
+ok(SZ.byCount && SZ.unknownPct === 50 && SZ.groups.every(g => g.pct === 50) && run2('buildFertilizerPlan(Object.assign({}, dZ, { yield: [], luasPanen: [], hargaJual: [], revKg: [] })).empty') === true,
+  'blok 0 ha: porsi jenis tanah dihitung per jumlah blok, kebutuhan pupuk tidak dihitung (tidak error)');
+ctx2.dG = { flowPanen: [ser([1713, 66])[0], ser([1713, 66])[1], { p: pm(8), label: 'x', value: 4142 }], flowMuat: [], flowTrip: [], flowSoldNoWeight: [],
+  produksi: [], bjr: [], hargaJual: [], revKg: [], totalJjg: [], bjrSoldMonthly: [] };
+ctx2.dG.flowMuat = [{ p: pm(5), value: 0 }, { p: pm(6), value: 0 }, { p: pm(8), value: 3033 }].map(x => Object.assign({ label: 'x' }, x));
+ctx2.dG.flowSold = ctx2.dG.flowMuat;
+const FG = run2('buildFlow(dG)');
+ok(FG.cur.afterGap && FG.cur.carryIn === 0 && FG.cur.lossJjg === 0 && FG.cur.pendingJjg === 1109 && /Pembanding terakhir/.test(run2('describeFlow({ flow: buildFlow(dG) })')),
+  'bulan kosong di antaranya (Agustus): sisa Juni–Juli tidak dibawa ke September, pembanding disebut "terakhir"');
+
+// BJR di atas batas wajar (> 35 kg) tidak dipakai dan ditandai
+const GB = G.map(r => r.slice()); GB[10][9] = 40.5;
+ctx2.sheetB = { getName: () => 'Kebun Uji', getDataRange: () => ({ getValues: () => GB.map(r => r.slice()), getDisplayValues: () => GB.map(r => r.map(v => (typeof v === 'number' ? String(v) : v))) }), getRange: () => ({ getValue: () => '' }) };
+const DB = run2('loadSheetData(sheetB)');
+ok(DB.bjr.every(x => x.value === null || x.value <= 35) && DB.zeroFixes.some(z => /BJR tidak wajar \(di atas 35 kg\)/.test(z) && /40,5 kg/.test(z)),
+  'BJR 40,5 kg ditandai tidak wajar dan tidak dipakai untuk tonase/rupiah');
+
 // 11. Produksi per blok (janjang dipanen per blok) + kaitan dengan status pupuk
 const pb = run2(`parseBlocks('F10, 3.39 ha, 2012, -, 342; B8, 1.49 ha, 2017, -; Blok Pasar Bingung, 5 ha, 2009, Gambut, 1084')`);
 ok(pb[0].jjg === 342 && pb[0].soil === null && pb[1].jjg === null && pb[2].soil === 'Gambut' && pb[2].jjg === 1084,

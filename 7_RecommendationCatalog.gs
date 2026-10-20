@@ -175,14 +175,14 @@ const RECO_CATALOG = [
     signals: 'Ada janjang terjual tanpa catatan berat dalam porsi berarti.',
     topics: ['tanpaberat', 'bjr'],
     when: d => { const N = d.noWeight; return N && N.share > DECK_CONFIG.THRESHOLDS.NOWEIGHT_PCT
-      ? { evidence: `${fmt(N.share, 0)}% janjang terjual tanpa berat (${fmt(N.nwSum, 0)} jjg ≈ ${fmtRp(N.rpSum)})`, priority: N.share > 20 ? 'tinggi' : 'sedang' } : null; } },
+      ? { evidence: `${fmt(N.share, 0)}% janjang terjual tanpa berat (${fmt(N.nwSum, 0)} jjg${N.rpSum ? ` ≈ ${fmtRp(N.rpSum)}` : ''})`, priority: N.share > 20 ? 'tinggi' : 'sedang' } : null; } },
 
   { code: 'R21', title: 'Telusuri blok yang tidak tercatat menjual',
     action: 'Cek per blok apakah janjang dipanen, tertinggal di TPH, atau dijual tanpa dicatat blok asalnya; tetapkan pengawasan blok tersebut.',
     signals: 'Blok yang sama berulang kali dipanen tetapi tidak tercatat menjual.',
     topics: ['blokunsale', 'alurjjg'],
     when: d => { const U = d.unsale; return U && U.chronic.length
-      ? { evidence: `${U.chronic.length} blok (${fmt(U.chronic.reduce((a, b) => a + b.ha, 0), 1)} ha) tanpa penjualan ≥ ${DECK_CONFIG.THRESHOLDS.UNSALE_MONTHS} bulan, mis. ${U.chronic.slice(0, 3).map(b => b.name).join(', ')}`, priority: 'tinggi' } : null; } },
+      ? { evidence: `${U.chronic.length} blok${U.chronic.some(b => b.ha) ? ` (${fmt(U.chronic.reduce((a, b) => a + b.ha, 0), 1)} ha)` : ''} tanpa penjualan ≥ ${DECK_CONFIG.THRESHOLDS.UNSALE_MONTHS} bulan, mis. ${U.chronic.slice(0, 3).map(b => b.name).join(', ')}`, priority: 'tinggi' } : null; } },
 
   { code: 'R22', title: 'Lakukan uji tanah per jenis tanah',
     action: 'Ambil contoh tanah per blok atau kelompok blok sejenis, analisis pH, C-organik, N, P, K, Mg, dan KTK, lalu catat jenis tanah di data blok KebunPRO.',

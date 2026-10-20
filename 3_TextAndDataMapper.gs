@@ -316,6 +316,11 @@ function getSheetData(sheet) {
     if (months.length) d.zeroFixes.push(`${name} tercatat 0 pada ${months.join(', ')} (dianggap belum diinput)`);
   });
 
+  // BJR di atas batas wajar (mis. 40 kg dari 155 janjang ditimbang) tidak dipakai untuk menilai tonase/rupiah
+  const bjrMax = DECK_CONFIG.THRESHOLDS.BJR_MAX_KG, highBjr = [];
+  d.bjr = d.bjr.map(x => { if (x.value !== null && x.value > bjrMax) { highBjr.push(`${monthShort(x.p)} ${fmt(x.value, 1)} kg`); return { p: x.p, label: x.label, value: null }; } return x; });
+  if (highBjr.length) d.zeroFixes.push(`BJR tidak wajar (di atas ${bjrMax} kg) pada ${highBjr.join(', ')}; kemungkinan tonase salah catat atau janjang yang ditimbang terlalu sedikit, jadi tidak dipakai`);
+
   // Biaya/upah yang 0 di SEMUA bulan berarti belum dicatat (bukan gratis) -> dikosongkan agar margin tidak menyesatkan
   [['upahKg', 'biaya pekerja/kg'], ['costHa', 'biaya/ha'], ['costTotal', 'total biaya']].forEach(([k, name]) => {
     const vals = d[k].filter(x => x.value !== null);
@@ -367,6 +372,11 @@ function getSheetData(sheet) {
     });
   }
   d.blocks = buildBlockAnalytics(d);
+  if (d.blocks) {
+    const noHa = d.blocks.blocks.filter(b => !b.ha);
+    if (noHa.length) d.zeroFixes.push(`luas blok tercatat 0 ha untuk ${noHa.length === d.blocks.blocks.length ? 'SEMUA' : noHa.length} dari ${d.blocks.blocks.length} blok (mis. ${noHa.slice(0, 3).map(b => b.name).join(', ')}); ` +
+      'produktivitas per ha, standar Marihat, produktivitas per blok, dan kebutuhan pupuk tidak dapat dihitung untuk blok ini sampai luasnya dilengkapi');
+  }
   d.unsale = buildUnsaleAnalytics(d);
   d.noWeight = buildNoWeightAnalytics(d);
   d.rawatActivities = parseRawatTable(d.rawat);
@@ -397,8 +407,13 @@ function getSheetData(sheet) {
     const ms = d.produksi.filter(x => x.value !== null && valAt(soldDen, x.p));
     const tS = ms.reduce((a, x) => a + x.value, 0), jS = ms.reduce((a, x) => a + valAt(soldDen, x.p), 0);
     if (jS) d.bjrSoldCum = (tS * 1000) / jS;
+    if (d.bjrSoldCum && d.bjrSoldCum > DECK_CONFIG.THRESHOLDS.BJR_MAX_KG) {
+      d.zeroFixes.push(`BJR tonase ÷ janjang terjual berberat = ${fmt(d.bjrSoldCum, 1)} kg tidak wajar (di atas ${DECK_CONFIG.THRESHOLDS.BJR_MAX_KG} kg; hanya dari ${fmt(jS, 0)} janjang ditimbang); estimasi tonase dan rupiah dari BJR tidak dihitung`);
+      d.bjrSoldCum = null;
+    }
     d.bjrSoldMonthly = d.produksi.map(x => { const j = valAt(soldDen, x.p);
-      return { p: x.p, label: x.label, value: x.value !== null && j ? (x.value * 1000) / j : null }; });
+      const v = x.value !== null && j ? (x.value * 1000) / j : null;
+      return { p: x.p, label: x.label, value: v !== null && v <= DECK_CONFIG.THRESHOLDS.BJR_MAX_KG ? v : null }; });
     if (d.bjrSoldCum && d.flowPanen.length) {
       d.produksiPanen = d.flowPanen.map(x => ({ p: x.p, label: x.label, value: x.value !== null ? (x.value * d.bjrSoldCum) / 1000 : null }));
     }
@@ -897,10 +912,11 @@ function describeNoWeight(d) {
   const N = d.noWeight;
   if (!N) return 'Janjang terjual tanpa berat: kolom belum tersedia.';
   const L = [`JANJANG TERJUAL TANPA BERAT: ${fmt(N.nwSum, 0)} janjang (${fmt(N.share, 1)}% dari janjang terjual) tidak dicatat beratnya; ` +
-    `tonasenya tidak masuk total tonase terjual. Estimasi tonase tidak tercatat ${fmt(N.tonSum, 1)} ton ≈ ${fmtRp(N.rpSum)} (janjang tanpa berat × BJR × harga jual).`];
+    (N.rpSum ? `tonasenya tidak masuk total tonase terjual. Estimasi tonase tidak tercatat ${fmt(N.tonSum, 1)} ton ≈ ${fmtRp(N.rpSum)} (janjang tanpa berat × BJR × harga jual).`
+      : 'tonasenya tidak masuk total tonase terjual. Nilainya belum dapat diestimasi karena BJR yang wajar belum tersedia.')];
   L.push(`- per bulan (tanpa berat | dengan berat | %): ${N.monthly.map(x => `${x.label} ${fmt(x.nw, 0)} | ${fmt(x.sold, 0)} | ${x.share === null ? '-' : fmt(x.share, 0) + '%'}`).join('; ')}`);
   if (N.worst && N.worst.share) L.push(`- tertinggi ${monthLong(N.worst.p)}: ${fmt(N.worst.share, 0)}% janjang terjual tanpa berat.`);
-  if (N.share > DECK_CONFIG.THRESHOLDS.NOWEIGHT_PCT) L.push(`PERLU DICEK: ${fmt(N.share, 0)}% janjang terjual tanpa catatan berat (≈ ${fmtRp(N.rpSum)} tidak tercatat); BJR dan pendapatan kebun tampak lebih kecil dari sebenarnya.`);
+  if (N.share > DECK_CONFIG.THRESHOLDS.NOWEIGHT_PCT) L.push(`PERLU DICEK: ${fmt(N.share, 0)}% janjang terjual tanpa catatan berat${N.rpSum ? ` (≈ ${fmtRp(N.rpSum)} tidak tercatat)` : ''}; BJR dan pendapatan kebun tampak lebih kecil dari sebenarnya.`);
   return L.join('\n');
 }
 
@@ -1198,7 +1214,7 @@ const KPI_LIBRARY = {
   },
   tanpa_berat: d => d.noWeight && {
     name: 'Terjual tanpa berat', value: `${fmt(d.noWeight.share, 0)}%`, unit: '',
-    note: `${fmt(d.noWeight.nwSum, 0)} janjang, ±${fmtRpShort(d.noWeight.rpSum)} tidak tercatat` },
+    note: `${fmt(d.noWeight.nwSum, 0)} janjang${d.noWeight.rpSum ? `, ±${fmtRpShort(d.noWeight.rpSum)}` : ''} tidak tercatat beratnya` },
   margin_rata2: d => {
     const s = seriesStats(d.margin);
     if (!s) return null;
@@ -1368,7 +1384,7 @@ function buildFlow(d) {
   const bjrBasis = basisPanen ? bjrPanen : bjrSold;
   let bjrUsed = null, bjrSource = '';
   const sheetBjr = seriesStats(d.bjr);
-  const ok = v => v && v >= 3 && v <= 40;
+  const ok = v => v && v >= 3 && v <= T.BJR_MAX_KG;
   if (ok(bjrBasis)) { bjrUsed = bjrBasis; bjrSource = basisPanen ? 'tonase ÷ janjang dipanen' : 'tonase ÷ janjang terjual'; }
   else if (sheetBjr && ok(sheetBjr.avg)) { bjrUsed = sheetBjr.avg; bjrSource = `rata-rata BJR bulanan, karena tonase ÷ janjang = ${fmt(bjrBasis, 1)} kg tidak wajar`; }
   else if (d.marihat) { bjrUsed = d.marihat.pot.rbt; bjrSource = `standar Marihat ${d.marihat.cls}, karena BJR data tidak wajar`; }
@@ -1465,7 +1481,10 @@ function buildFlow(d) {
     };
   };
   const monthly = [];
-  months.forEach((p, i) => { const prevS = monthly[i - 1]; monthly.push(snapshot(p, prevS ? prevS.balance : 0, i > 0)); });
+  // Saldo hanya dibawa dari bulan kalender sebelumnya; bila ada bulan kosong di antaranya, penjualannya tidak diketahui
+  const nextOf = p => ({ y: p.m === 11 ? p.y + 1 : p.y, m: (p.m + 1) % 12 });
+  months.forEach((p, i) => { const prevS = monthly[i - 1], linked = !!prevS && mkey(nextOf(prevS.p)) === mkey(p);
+    const s = snapshot(p, linked ? prevS.balance : 0, linked); s.afterGap = !!prevS && !linked; monthly.push(s); });
   const cur = monthly[monthly.length - 1] || null, prevM = monthly.length > 1 ? monthly[monthly.length - 2] : null;
   // Sisa yang tertahan di akhir bulan laporan tetapi sudah terjual di bulan berjalan (terjual > dipanen) bukan kerugian
   const PF = d.partialFlow;
@@ -1512,7 +1531,7 @@ function describeFlow(d) {
       'Selisih panen − terjual BULAN INI ditulis "belum terjual" (sering baru terjual awal bulan berikutnya), bukan kerugian.');
     L.push(`KEBOCORAN BULAN LAPORAN (pakai angka ini untuk judul, KPI, dan ringkasan): ${mline(F.cur)}.`);
     if (F.prev) {
-      L.push(`- Pembanding bulan sebelumnya: ${mline(F.prev)}.`);
+      L.push(`- ${F.cur.afterGap ? `Pembanding terakhir (bulan di antaranya tidak ada data; sisa belum terjual tidak dibawa)` : 'Pembanding bulan sebelumnya'}: ${mline(F.prev)}.`);
       if (!F.cur.overSold && !F.prev.overSold && F.prev.lossRp && F.cur.lossRp !== null) {
         const ch = ((F.cur.lossRp - F.prev.lossRp) / Math.abs(F.prev.lossRp)) * 100;
         L.push(`- Estimasi kerugian (tertahan > 1 bulan) ${monthShort(F.cur.p)} ${ch >= 0 ? 'naik' : 'turun'} ${fmt(Math.abs(ch), 0)}% dibanding ${monthShort(F.prev.p)} (${fmtRp(F.cur.lossRp)} vs ${fmtRp(F.prev.lossRp)}).`);

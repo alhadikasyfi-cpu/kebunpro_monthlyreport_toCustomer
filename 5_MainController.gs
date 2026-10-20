@@ -370,7 +370,7 @@ const OWNER_KPIS = {
     const N = d.noWeight, lim = DECK_CONFIG.THRESHOLDS.NOWEIGHT_PCT;
     if (!N) return null;
     return { name: 'Terjual tanpa berat', value: `${fmt(N.share, 0)}%`, unit: '',
-             note: `Batas wajar ≤ ${lim}% · ±${fmtRpShort(N.rpSum)}`, tone: N.share > lim ? 'bad' : 'good' };
+             note: `Batas wajar ≤ ${lim}%${N.rpSum ? ` · ±${fmtRpShort(N.rpSum)}` : ''}`, tone: N.share > lim ? 'bad' : 'good' };
   },
   biaya_per_kg: d => {
     const s = seriesStats(d.upahKg), h = seriesStats(d.hargaJual && d.hargaJual.length ? d.hargaJual : d.revKg);
@@ -710,8 +710,8 @@ function buildTopics(d) {
     id: 'tanah', title: 'Jenis Tanah Blok',
     visual: 'tabel jenis tanah: luas ha, porsi luas, jumlah blok, fokus hara; baris Belum tercatat bila data tanah kosong',
     facts: describeSoil(d),
-    fallback: d.soil.unknownHa
-      ? `Jenis tanah belum tercatat untuk ${d.soil.unknownCount} blok (${fmt(d.soil.unknownHa, 1)} ha, ${fmt(d.soil.unknownPct, 0)}% luas), sehingga dosis pupuk belum dapat disesuaikan dengan kondisi tanah. Uji tanah per kelompok blok menjadi langkah pertama.`
+    fallback: d.soil.unknownCount || !d.soil.dominant
+      ? `Jenis tanah belum tercatat untuk ${d.soil.unknownCount} blok (${d.soil.byCount ? `${fmt(d.soil.unknownPct, 0)}% blok` : `${fmt(d.soil.unknownHa, 1)} ha, ${fmt(d.soil.unknownPct, 0)}% luas`}), sehingga dosis pupuk belum dapat disesuaikan dengan kondisi tanah. Uji tanah per kelompok blok menjadi langkah pertama.`
       : `Tanah dominan ${d.soil.dominant.name.toLowerCase()} (${fmt(d.soil.dominant.pct, 0)}% luas) dengan fokus hara ${d.soil.dominant.type.fokus}.`,
     draw: b => drawTable(b, ['Jenis tanah', 'Luas\nha', 'Porsi\nluas', 'Blok', 'Fokus hara'], SR,
       { colWidths: [2.3, 1.1, 1.1, 0.9, 3.2], fontSize: DECK_CONFIG.TYPE.TABLE_CELL, headerSize: DECK_CONFIG.TYPE.TABLE_HEADER, rowHeight: 25, headerHeight: 36, numCols: [1, 2, 3] })

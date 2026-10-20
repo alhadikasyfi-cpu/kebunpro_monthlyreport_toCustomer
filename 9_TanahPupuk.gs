@@ -172,8 +172,10 @@ function buildSoilAnalytics(d) {
     if (um !== null) { g.unsaleMonths += um; g.blockMonths += nMonths; }
   });
   const groups = Object.keys(map).map(k => map[k]).sort((a, b) => (a.key === 'unknown') - (b.key === 'unknown') || b.ha - a.ha);
+  // Luas blok 0 di semua isian (luas belum dicatat): porsi dihitung dari jumlah blok
+  const byCount = !B.totalHa, nBlocks = B.blocks.length;
   groups.forEach(g => {
-    g.pct = B.totalHa ? (g.ha / B.totalHa) * 100 : 0;
+    g.pct = byCount ? (g.count / nBlocks) * 100 : (g.ha / B.totalHa) * 100;
     g.unsaleRate = g.blockMonths ? (g.unsaleMonths / g.blockMonths) * 100 : null;
     const ages = g.blocks.filter(b => b.age !== null);
     g.avgAge = ages.length ? ages.reduce((a, b) => a + b.age * b.ha, 0) / ages.reduce((a, b) => a + b.ha, 0) : null;
@@ -182,7 +184,7 @@ function buildSoilAnalytics(d) {
   const unknownHa = unk ? unk.ha : 0;
   const known = groups.filter(g => g.key !== 'unknown');
   return { groups, totalHa: B.totalHa, unknownHa, unknownCount: unk ? unk.count : 0,
-           unknownPct: B.totalHa ? (unknownHa / B.totalHa) * 100 : 0, knownPct: B.totalHa ? 100 - (unknownHa / B.totalHa) * 100 : 0,
+           unknownPct: unk ? unk.pct : 0, knownPct: 100 - (unk ? unk.pct : 0), byCount,
            dominant: known.length ? known[0] : null };
 }
 
@@ -220,6 +222,7 @@ function buildFertilizerPlan(d) {
   const map = {};
   let haTbm = 0, haNoAge = 0;
   B.blocks.forEach(b => {
+    if (!b.ha) return;   // luas blok belum dicatat (0 ha): kebutuhan pupuk tidak dapat dihitung
     if (b.age === null || b.age === undefined) { haNoAge += b.ha; return; }
     const ac = acuanDosisAt(b.age);
     if (!ac) { haTbm += b.ha; return; }
