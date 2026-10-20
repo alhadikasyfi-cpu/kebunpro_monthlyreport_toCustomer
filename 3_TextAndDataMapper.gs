@@ -535,7 +535,9 @@ function buildBlockAnalytics(d) {
 function describeBlocks(d) {
   const B = d.blocks;
   if (!B) return 'Data blok: ANOMALI: belum tersedia.';
-  const L = [`Blok dipanen (${B.blocks.length} blok unik, total ${fmt(B.totalHa, 1)} ha; umur dihitung per tahun ${B.refYear}):`];
+  const L = [B.totalHa
+    ? `Blok dipanen (${B.blocks.length} blok unik, total ${fmt(B.totalHa, 1)} ha; umur dihitung per tahun ${B.refYear}):`
+    : `Blok dipanen (${B.blocks.length} blok unik; LUAS BLOK BELUM TERCATAT, semua blok 0 ha — JANGAN menulis angka luas kebun dalam ha; umur dihitung per tahun ${B.refYear}):`];
   B.classes.forEach(c => L.push(`- ${c.name}: ${fmt(c.value, 1)} ha (${fmtPct(c.pct, 0)}, ${c.count} blok)`));
   if (B.replant.length) L.push(`- Lewat umur ekonomis (>${DECK_CONFIG.THRESHOLDS.REPLANT_AGE} th): ${B.replant.length} blok, ${fmt(B.replant.reduce((s, b) => s + b.ha, 0), 1)} ha; terbesar: ${B.replant.slice(0, 5).map(b => `${b.name} ${fmt(b.ha, 2)} ha tanam ${b.year}`).join(', ')}`);
   if (B.zeroJjg && B.zeroJjg.length) L.push(`PERLU DICEK: ${B.zeroJjg.length} blok (${fmt(B.zeroJjgHa, 1)} ha) tercantum di daftar blok tetapi janjangnya 0 di semua bulan, mis. ${B.zeroJjg.slice(0, 4).map(b => `${b.name} ${fmt(b.ha, 1)} ha`).join(', ')}; blok ini tidak dihitung dalam luas pembagi produktivitas. Pastikan blok memang belum menghasilkan atau janjangnya tercatat di blok lain.`);
