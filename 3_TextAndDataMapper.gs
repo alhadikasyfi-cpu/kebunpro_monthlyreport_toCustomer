@@ -201,8 +201,27 @@ function valueRightOf(display, aliases, fallback) {
   return isBlank(v) ? (fallback || '') : String(v).trim();
 }
 
+/**
+ * Cek semua file script sudah ada di proyek Apps Script. File yang belum disalin membuat fungsi tidak dikenal
+ * ("... is not defined"); pesan ini menyebut nama file yang perlu ditambahkan.
+ */
+function checkProjectFiles() {
+  const missing = [];
+  if (typeof setupTemplate !== 'function') missing.push('2_TemplateBuilder.gs');
+  if (typeof buildClaudePacket !== 'function') missing.push('4_ClaudeBridge.gs');
+  if (typeof planDeck !== 'function') missing.push('5_MainController.gs');
+  if (typeof drawCompareRows !== 'function') missing.push('6_ShapeCharts.gs');
+  if (typeof detectRecommendations !== 'function') missing.push('7_RecommendationCatalog.gs');
+  if (typeof marihatAt !== 'function') missing.push('8_StandarMarihat.gs');
+  if (typeof buildFertilizerStatus !== 'function') missing.push('9_TanahPupuk.gs');
+  if (typeof buildBlockProduction !== 'function') missing.push('10_ProduksiBlok.gs');
+  if (missing.length) throw new Error(`File script belum lengkap di proyek Apps Script: ${missing.join(', ')}. ` +
+    'Tambahkan file tersebut (Editor > + > Skrip, nama file sama persis tanpa ".gs") lalu tempel isinya, simpan, dan jalankan ulang.');
+}
+
 function getSheetData(sheet) {
   if (!sheet) throw new Error('Sheet tidak ditemukan. Jalankan dari Google Sheets yang aktif.');
+  checkProjectFiles();
   const rng = sheet.getDataRange();
   const values = rng.getValues();
   const display = rng.getDisplayValues();

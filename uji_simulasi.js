@@ -262,6 +262,7 @@ ok(/▲ 20%/.test(cmp.req) && /Sep 26 \(bulan laporan\)/.test(cmp.req) && cmp.te
 const ctx2 = Object.assign({}, ctx); delete ctx2.sheet; vm.createContext(ctx2);
 for (const f of ['1_ConfigAndStyle.gs', '3_TextAndDataMapper.gs', '4_ClaudeBridge.gs', '5_MainController.gs', '6_ShapeCharts.gs',
                  '7_RecommendationCatalog.gs', '8_StandarMarihat.gs', '9_TanahPupuk.gs', '10_ProduksiBlok.gs']) vm.runInContext(fs.readFileSync(OUT + f, 'utf8'), ctx2, { filename: f });
+vm.runInContext('function setupTemplate() {}', ctx2);   // file 2 (SlidesApp/Drive) tidak dijalankan di Node
 const W = 20, blank = () => Array(W).fill('');
 const G = []; for (let i = 0; i < 60; i++) G.push(blank());
 const put = (r, c, v) => { G[r][c] = v; };
@@ -412,6 +413,12 @@ ok(run2(`r04.when({ yield: [], upkeep: null, marihat: { reliable: false, achTon:
 ctx2.yUp = [5, 6, 7, 8, 9, 10].map((v, i) => ({ p: { y: 2026, m: i }, label: 'x', value: v }));
 ok(run2(`r17.when({ yield: yUp, marihat: { achTon: 0.29 } })`) === null && !!run2(`r17.when({ yield: yUp, marihat: { achTon: 0.95 } })`),
   'R17 (pertahankan praktik baik) tidak muncul bila hasil masih < 70% standar');
+
+// 10c. File script belum lengkap -> pesan menyebut nama file (bukan "buildBlockProduction is not defined")
+const missMsg = run2(`(function(){ const f = buildBlockProduction; buildBlockProduction = undefined;
+  try { checkProjectFiles(); return ''; } catch (e) { return e.message; } finally { buildBlockProduction = f; } })()`);
+ok(/10_ProduksiBlok\.gs/.test(missMsg) && !/9_TanahPupuk/.test(missMsg) && run2('checkProjectFiles()') === undefined,
+  `file belum lengkap -> pesan jelas: "${missMsg.slice(0, 70)}..."`);
 
 // 11. Produksi per blok (janjang dipanen per blok) + kaitan dengan status pupuk
 const pb = run2(`parseBlocks('F10, 3.39 ha, 2012, -, 342; B8, 1.49 ha, 2017, -; Blok Pasar Bingung, 5 ha, 2009, Gambut, 1084')`);
