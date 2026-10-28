@@ -410,13 +410,22 @@ function buildFertilizerStatus(d) {
       arah: doseVerdict === 'kurang' ? 'kurang' : doseVerdict === 'berlebih' ? 'lebih' : 'netral' });
   }
   // 3. Pemupukan yang tercatat di KebunPRO (biaya upkeep & aktivitas mandor rawat)
-  const fertUpkeep = upkeepItems(d).filter(x => /pupuk|fert|pemupukan/i.test(x.name));
+  const fertUpkeep = upkeepItems(d).filter(x => x.cat === 'pupuk' || /pupuk|fert|pemupukan/i.test(x.name));
   const R = d.rawatActivities;
   const fertDays = R ? R.rows.reduce((a, r) => a + r.vals.filter(v => v && v.acts.some(x => /pupuk|fert|pemupukan/i.test(x.name))).length, 0) : 0;
-  if (d.upkeep || R) {
+  const UF = d.upkeepAnalysis && d.upkeepAnalysis.months.length >= 3 ? d.upkeepAnalysis.fert : null;
+  if (UF) {
+    // Upkeep per bulan: frekuensi pemupukan setahun dan jarak dari pemupukan terakhir
+    const jarang = UF.months === 0 || (UF.of >= 6 && UF.perYear < 2) || (UF.monthsSince !== null && UF.monthsSince >= 6);
+    ev.push({ indikator: 'Pemupukan tercatat', kebun: UF.months ? `${UF.months} dari ${UF.of} bulan${UF.last ? `, terakhir ${monthShort(UF.last)}` : ''}${UF.rpHaYear ? `, upah ${fmtRpShort(UF.rpHaYear)}/ha/th` : ''}` : `tidak ada dalam ${UF.of} bulan`,
+      acuan: '2–3 kali/tahun', arti: UF.months === 0 ? 'tidak ada biaya pemupukan di catatan upkeep'
+        : jarang ? (UF.monthsSince >= 6 ? `${UF.monthsSince} bulan tanpa pemupukan` : 'pemupukan jarang') : 'pemupukan tercatat rutin', arah: jarang ? 'kurang' : 'netral' });
+  } else if (d.upkeep || R || d.upkeepAnalysis) {
     const ada = fertUpkeep.length || fertDays;
     ev.push({ indikator: 'Pemupukan tercatat', kebun: ada ? [fertUpkeep.length ? fmtRpShort(fertUpkeep.reduce((a, x) => a + x.value, 0)) : '', fertDays ? `${fertDays} catatan mandor` : ''].filter(Boolean).join(', ') : 'tidak tercatat',
-      acuan: '2–3 kali/tahun', arti: ada ? 'ada catatan pemupukan' : 'belum terlihat di catatan KebunPRO', arah: ada ? 'netral' : 'kurang' });
+      // Catatan upkeep per bulan yang baru 1–2 bulan belum cukup untuk menyimpulkan "tidak ada pemupukan"
+      acuan: '2–3 kali/tahun', arti: ada ? 'ada catatan pemupukan' : d.upkeepAnalysis ? `catatan upkeep baru ${d.upkeepAnalysis.months.length} bulan, belum cukup dinilai` : 'belum terlihat di catatan KebunPRO',
+      arah: ada || d.upkeepAnalysis ? 'netral' : 'kurang' });
   }
   // 3b. Produksi per blok (file 10): blok yang RUTIN dipanen tetapi janjang/ha jauh di bawah standar umurnya
   const P = d.blockProd, T = DECK_CONFIG.THRESHOLDS;

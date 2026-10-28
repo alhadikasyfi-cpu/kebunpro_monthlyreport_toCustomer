@@ -67,8 +67,11 @@ const DECK_CONFIG = {
   // Saran: isi tabel itu dengan total 12 bulan penuh yang sama dengan periode laporan, lalu ubah teks ini.
   UPKEEP_ACTIVITY_PERIOD: 'bulan berjalan',
 
-  // Bulan berjalan (belum genap sebulan) tidak dimasukkan ke grafik & statistik.
+  // Bulan berjalan (belum genap sebulan) tidak dimasukkan ke grafik & statistik,
+  // KECUALI hari ini sudah lewat tanggal PARTIAL_MONTH_MIN_DAY (mis. 28 Oktober > 25): bulan itu ikut dianalisis.
   EXCLUDE_CURRENT_MONTH: true,
+  PARTIAL_MONTH_MIN_DAY: 25,
+  TODAY: null,   // hanya untuk uji: tanggal acuan 'YYYY-MM-DD' (null = hari ini)
 
   // Urutan tanggal untuk teks seperti 1/10/2025: 'DMY' (Indonesia) atau 'MDY'
   DATE_ORDER: 'DMY',
@@ -122,6 +125,10 @@ const DECK_CONFIG = {
     BLOCK_LOW_ACH: 0.6,         // janjang/pokok/tahun blok < 60% standar Marihat umurnya -> blok berproduktivitas rendah
     BLOCK_REGULAR: 0.7,         // blok dipanen ≥ 70% bulan periode = panen teratur (rendahnya bukan karena rotasi)
     BLOCK_VERY_LOW_ACH: 0.1,    // janjang/ha < 10% standar -> selain penyebab di lapangan, luas blok juga perlu dicek
+    COST_MAX_RP_HA_MONTH: 5000000, // biaya pekerja > Rp5 juta/ha dalam sebulan tidak wajar -> salah input, tidak dipakai (laba, biaya/kg)
+    UPKEEP_SPIKE_X: 5,          // biaya satu pekerjaan / total bulan > 5× median bulan lain -> lonjakan, cek input
+    UPKEEP_SPIKE_MIN_RP: 5000000, //   ...dan selisihnya > Rp5 juta (lonjakan kecil diabaikan)
+    UPKEEP_MAX_RP_HA_MONTH: 3000000, // upkeep > Rp3 juta/ha dalam satu bulan tidak wajar -> kemungkinan salah input
     BJR_MAX_KG: 35,             // BJR > 35 kg tidak wajar (standar Marihat tertinggi ±35 kg) -> salah catat/sampel timbang terlalu kecil
     BJR_MAX_NOWEIGHT_PCT: 50,   // > 50% janjang terjual tanpa berat -> BJR dari sampel terlalu kecil, tidak jadi dasar status pupuk
     MIN_MONTHS_ANNUAL: 6,       // < 6 bulan data: angka per tahun hanya indikatif (musim panen: Jun–Sep ±38–40% panen setahun), penyebab blok rendah belum disimpulkan
@@ -294,7 +301,7 @@ const DECK_CONFIG = {
     REV_HA: ['revenue_per_ha', 'revenue_per_ha_idr'],
     COST_HA: ['total_cost_per_ha', 'cost_per_ha_idr'],
     UPKEEP_LABEL: ['Upkeep Cost', 'Upkeep Cost 12 bulan juga'],
-    UPKEEP_HEADER: ['activity_group'],
+    UPKEEP_HEADER: ['activity_group', 'activity_group (name; cost)'],
     RAWAT_LABEL: ['Top Mandor Rawat'],
     PANEN_LABEL: ['Top Mandor Panen'],
     MUAT_LABEL: ['Top Mandor Muat'],
@@ -424,6 +431,18 @@ function addSlideTitle(slide, text) {
   const L = DECK_CONFIG.LAYOUT;
   return addText(slide, text, L.TITLE.left, L.TITLE.top, L.TITLE.width, L.TITLE.height,
     { weight: DECK_CONFIG.WEIGHT.TITLE, size: DECK_CONFIG.TYPE.SLIDE_TITLE, color: DECK_CONFIG.COLOR.INK, valign: 'MIDDLE' });
+}
+
+/** Tanggal acuan "hari ini" (DECK_CONFIG.TODAY dipakai saat uji). */
+function refToday() {
+  return DECK_CONFIG.TODAY ? new Date(`${DECK_CONFIG.TODAY}T12:00:00`) : new Date();
+}
+
+/** Bulan p = bulan berjalan yang BELUM lengkap (hari ini ≤ PARTIAL_MONTH_MIN_DAY) -> dikeluarkan dari analisis. */
+function isPartialMonth(p) {
+  if (!p || !DECK_CONFIG.EXCLUDE_CURRENT_MONTH) return false;
+  const t = refToday();
+  return p.y === t.getFullYear() && p.m === t.getMonth() && t.getDate() <= DECK_CONFIG.PARTIAL_MONTH_MIN_DAY;
 }
 
 /** Perkiraan jumlah baris teks dalam lebar tertentu (pt). */

@@ -280,7 +280,7 @@ function loadSheetData(sheet) {
 }
 
 function kpiDelta(cur, ref) { return cur !== null && cur !== undefined && ref ? ((cur - ref) / Math.abs(ref)) * 100 : null; }
-function arrowPct(p) { return p === null ? '' : `${p >= 0 ? '▲' : '▼'} ${fmt(Math.abs(p), 0)}%`; }
+function arrowPct(p) { return p === null ? '' : p > 400 ? `▲ ${fmt(p / 100 + 1, 0)}×` : `${p >= 0 ? '▲' : '▼'} ${fmt(Math.abs(p), 0)}%`; }   // naik > 5 kali: "▲ 20×"
 /** 'good' | 'bad' | 'neutral' dari selisih (%) dan arah yang baik (naik baik = true). */
 function toneOf(p, goodUp) { if (p === null || Math.abs(p) < 1) return 'neutral'; return (p > 0) === goodUp ? 'good' : 'bad'; }
 /** Realisasi vs target: catatan & warna. */
@@ -394,6 +394,12 @@ function computeOwnerKpis(data) {
     if (kpis.length < n && keys.indexOf(k) < 0) { const v = get(k); if (v && !kpis.some(x => x.name === v.name)) kpis.push(v); }
   });
   while (kpis.length < n) kpis.push({ name: 'Data', value: '-', unit: '', note: 'Data belum tersedia', tone: 'neutral' });
+  // Kartu yang angkanya dari bulan sebelum bulan laporan (bulan laporan belum tercatat) diberi keterangan jelas
+  const rep = data.reportP ? monthShort(data.reportP) : null;
+  kpis.forEach(k => {
+    const m = String(k.name || '').match(/([A-Z][a-z]{2} \d{2})$/);
+    if (rep && m && m[1] !== rep) k.note = `${rep} belum tercatat · ${k.note || ''}`.replace(/ · $/, '');
+  });
   return kpis.slice(0, n);
 }
 
@@ -734,7 +740,32 @@ function buildTopics(d) {
           return c === 3 && e.arah !== 'netral' ? DECK_CONFIG.COLOR.DANGER : null; } })
   });
 
-  const up = upkeepItems(d);
+  // Biaya perawatan per bulan (file 11): grafik per kategori + tabel pekerjaan bulan laporan
+  const UK = d.upkeepAnalysis;
+  if (UK && UK.months.length) {
+    const sp = UK.spikes[0], c = UK.cur;
+    T.push({
+      id: 'upkeep', section: 'Analisis Pengeluaran', title: 'Biaya Perawatan per Bulan',
+      visual: `bar bertumpuk biaya perawatan per bulan (Rp juta) per kategori: ${UK.catSeries.map(x => x.name.toLowerCase()).join(', ')}`,
+      facts: describeUpkeepMonthly(d),
+      fallback: sp ? `Biaya ${sp.name.toLowerCase()} ${monthLong(sp.p)} tercatat ${fmtRp(sp.cost)}, ${fmt(sp.ratio, 0)} kali median bulan lain (${fmtRp(sp.median)}), sehingga perlu dicek apakah ada salah input.`
+        : c ? `Biaya perawatan ${monthLong(c.p)} ${fmtRp(c.total)}${UK.avgPrev ? `, ${c.total >= UK.avgPrev ? 'di atas' : 'di bawah'} biasanya (median bulan sebelumnya ${fmtRp(UK.avgPrev)})` : ''}; terbesar untuk ${c.items.length ? c.items[0].name.toLowerCase() : '-'}.`
+        : fallbackInsight('Biaya perawatan', '', UK.totalSeries, fmtRp),
+      draw: b => drawStackedBarChart(b, UK.catSeries.map(x => ({ name: x.name, series: x.series, color: x.color })), { scale: 1e6, labelFmt: f1, axisFmt: jtAxis })
+    });
+    const UR = upkeepTableRows(d);
+    if (UR) T.push({
+      id: 'upkeepakt', section: 'Analisis Pengeluaran', title: 'Pekerjaan Perawatan Bulan Laporan',
+      visual: `tabel pekerjaan perawatan ${monthLong(c.p)}: biaya bulan ini, bulan lalu, biasanya (median bulan sebelumnya, Rp juta), catatan lonjakan`,
+      facts: describeUpkeepMonthly(d),
+      fallback: `${c.items[0].name} menjadi biaya perawatan terbesar ${monthLong(c.p)}, ${fmtRp(c.items[0].cost)} (${fmt(c.total ? c.items[0].cost / c.total * 100 : 0, 0)}% dari ${fmtRp(c.total)}).`,
+      draw: b => drawTable(b, ['Pekerjaan', 'Kategori', `${monthShort(c.p)}\nRp jt`, `${UK.prev ? monthShort(UK.prev.p) : 'Bulan lalu'}\nRp jt`, 'Biasanya\n(median)', 'Catatan'], UR,
+        { colWidths: [2.4, 1.9, 1.1, 1.1, 1.2, 1.9], fontSize: DECK_CONFIG.TYPE.TABLE_CELL, headerSize: DECK_CONFIG.TYPE.TABLE_HEADER, rowHeight: 25, headerHeight: 36, numCols: [2, 3, 4],
+          cellColor: (r, col, txt) => (col === 5 && /lonjakan|naik/.test(txt) ? DECK_CONFIG.COLOR.DANGER : null) })
+    });
+  }
+
+  const up = UK ? [] : upkeepItems(d);
   if (up.length >= 2) T.push({
     id: 'upkeep', section: 'Analisis Pengeluaran', title: 'Analisis Pengeluaran: Komposisi Upkeep Cost',
     visual: `bar horizontal biaya perawatan per kelompok aktivitas (Rp jt dan % dari total), periode ${d.upkeepPeriod || DECK_CONFIG.UPKEEP_ACTIVITY_PERIOD}`,
@@ -1004,7 +1035,7 @@ const MAIN_GROUPS = [
     question: 'Berapa janjang atau uang yang hilang bulan ini antara panen dan penjualan, dibanding bulan lalu, dan di mana hilangnya?' },
   { id: 'm_penyebab', title: 'Penyebab Naik-Turun Hasil', members: ['jjg', 'blokprod', 'bjr', 'umur', 'tanah', 'pupuk', 'umuryield', 'replanting'], chart: ['bjr', 'jjg', 'umur'],
     question: 'Apa penyebab utama hasil per hektar rendah atau naik-turun: jumlah janjang, berat janjang (BJR), umur tanaman, atau kondisi tanah dan pemupukan?' },
-  { id: 'm_keuangan', title: 'Keuangan Kebun', members: ['laba', 'biayakomposisi', 'biayakg', 'efisiensi', 'biayaha', 'upkeep', 'margin'], chart: ['laba', 'biayaha', 'biayakomposisi', 'margin', 'biayakg'],
+  { id: 'm_keuangan', title: 'Keuangan Kebun', members: ['laba', 'biayakomposisi', 'upkeep', 'upkeepakt', 'biayakg', 'efisiensi', 'biayaha', 'margin'], chart: ['laba', 'biayaha', 'biayakomposisi', 'margin', 'biayakg'],
     question: 'Berapa uang yang tersisa setiap bulan setelah biaya pekerja, dan apa yang membuatnya turun atau rugi?' },
   { id: 'm_tim', title: 'Tim Kerja', members: ['mandorpanen', 'mandormuat', 'rawat'], chart: ['mandorpanen', 'mandormuat', 'rawat'],
     question: 'Apakah tim panen, muat, dan rawat bekerja cukup produktif dan merata?' }
@@ -1051,8 +1082,12 @@ const MAIN_SUMMARY = {
     const jt = s => m => { const v = at(s, m); return v === null || v === undefined ? null : v / 1e6; };
     const row = (label, unit, get, f, goodUp) => ({ label, unit, cur: get(p), ref: q ? get(q) : null, f, goodUp });
     const f1 = v => fmt(v, 1);
+    // Bulan laporan belum ada penjualan/tonase: grafik memakai bulan terakhir yang tercatat dan menyebutnya terus terang
+    const R = d.reportP, stale = R && mkey(R) !== mkey(p);
+    const pn = stale ? valAt(d.flowPanen || [], R) || valAt(d.totalJjg || [], R) : null;
     return {
-      curLabel: `${monthShort(p)} (bulan laporan)`, refLabel: refMonthLabel(p, q),
+      curLabel: `${monthShort(p)} (${stale ? 'data terakhir' : 'bulan laporan'})`, refLabel: refMonthLabel(p, q),
+      caption: stale ? `${monthLong(R)} belum ada penjualan/tonase tercatat${pn ? ` (dipanen ${fmt(pn, 0)} janjang)` : ''}; grafik memakai ${monthLong(p)}.` : '',
       rows: [
         row(d.produksiActual === false ? 'Estimasi produksi' : 'TBS terjual', 'ton', m => at(d.produksi, m), v => fmt(v, Math.abs(v) < 100 ? 1 : 0), true),
         row('Pendapatan', 'Rp juta', jt(d.revenueTotal), f1, true),
@@ -1115,15 +1150,25 @@ const MAIN_SUMMARY = {
     const ratio = m => { const r = at(d.revenueIdr && d.revenueIdr.length ? d.revenueIdr : d.revenueTotal, m), c = at(d.costTotal, m); return r && c !== null ? (c / r) * 100 : null; };
     const price = d.hargaJual && d.hargaJual.length ? d.hargaJual : d.revKg;
     const row = (label, unit, get, f, goodUp) => ({ label, unit, cur: get(p), ref: q ? get(q) : null, f, goodUp });
+    // Upkeep per bulan (file 11): baris biaya perawatan menggantikan biaya per kg; lonjakan disebut di keterangan
+    const UK = d.upkeepAnalysis;
+    const upk = UK ? m => { const v = valAt(UK.totalSeries, m); return v === null || v === undefined ? null : v / 1e6; } : null;
+    const R = d.reportP, stale = R && mkey(R) !== mkey(p);
+    const sp = UK && UK.spikes.find(x => mkey(x.p) === mkey(p) || (q && mkey(x.p) === mkey(q)));
+    const co = (d.costOutliers || []).find(x => mkey(x.p) === mkey(p));
+    const caption = [stale ? `${monthLong(R)} belum ada pendapatan tercatat; grafik memakai ${monthLong(p)}.` : '',
+      co ? `Biaya pekerja ${monthLong(co.p)} ${fmtRpShort(co.total)} tidak wajar (kemungkinan salah input), laba bulan ini tidak dihitung.` : '',
+      sp ? `Biaya ${sp.name.toLowerCase()} ${monthLong(sp.p)} ${fmtRpShort(sp.cost)}, ${fmt(sp.ratio, 0)}× biasanya; perlu dicek.` : ''].filter(Boolean).join(' ');
     return {
-      curLabel: `${monthShort(p)} (bulan laporan)`, refLabel: refMonthLabel(p, q),
+      curLabel: `${monthShort(p)} (${stale ? 'data terakhir' : 'bulan laporan'})`, refLabel: refMonthLabel(p, q), caption,
       rows: [
         row('Laba kotor', 'Rp juta, sebelum biaya material', m => { const v = at(d.profit, m); return v === null ? null : v / 1e6; }, v => fmt(v, 1), true),
         row('Porsi biaya pekerja', '% dari pendapatan', ratio, v => `${fmt(v, 0)}%`, false),
-        row('Biaya pekerja per kg', 'Rp/kg TBS', m => at(d.upahKg, m), v => fmt(v, 0), false),
+        upk ? row('Biaya perawatan', 'Rp juta (makin kecil makin baik)', upk, v => fmt(v, 1), false)
+            : row('Biaya pekerja per kg', 'Rp/kg TBS', m => at(d.upahKg, m), v => fmt(v, 0), false),
         row('Harga jual', 'Rp/kg TBS', m => at(price, m), v => fmt(v, 0), true)
       ],
-      desc: 'laba kotor, porsi biaya pekerja, biaya per kg, dan harga jual bulan laporan vs bulan lalu'
+      desc: `laba kotor, porsi biaya pekerja, ${upk ? 'biaya perawatan' : 'biaya per kg'}, dan harga jual bulan laporan vs bulan lalu`
     };
   },
   m_tim: d => {
@@ -1178,9 +1223,11 @@ function dataHeadline(id, d) {
   const laba = () => {
     const p = seriesStats(d.profit);
     if (!p) return null;
-    const avg = `Rp${fmt(p.avg / 1e6, 0)} juta`;
+    const avg = fmtRpShort(Math.abs(p.avg));
+    if (p.avg < 0) return [`Rata-rata rugi ${avg} per bulan`, 'Kebun merugi setelah biaya pekerja'];
+    if (p.n === 1) return [`Laba kotor ${monthLong(p.last.p)} ${avg}`];
     if (p.negatives.length) return [`Laba ${avg} per bulan, rugi pada ${monthLong(p.negatives[0].p)}`, `Laba ${avg} per bulan, sempat rugi`];
-    return [`Laba kotor rata-rata Rp${fmt(p.avg / 1e6, 1)} juta per bulan`, `Laba kotor rata-rata ${avg} per bulan`];
+    return [`Laba kotor rata-rata ${avg} per bulan`];
   };
   const H = {
     m_kinerja: () => {
@@ -1188,7 +1235,7 @@ function dataHeadline(id, d) {
       if (!s2) return null;
       const ton = `${fmt(s2.last.value, s2.last.value < 100 ? 1 : 0)} ton`;
       const lp = seriesStats(d.profit) ? valAt(d.profit, s2.last.p) : null;
-      const laba2 = lp !== null && lp !== undefined ? `laba Rp${fmt(lp / 1e6, 1)} juta` : '';
+      const laba2 = lp !== null && lp !== undefined ? (lp < 0 ? `rugi ${fmtRpShort(-lp)}` : `laba ${fmtRpShort(lp)}`) : '';
       return laba2 ? [`${monthLong(s2.last.p)}: ${ton} terjual, ${laba2}`, `${ton} TBS terjual, ${laba2}`]
                    : [`${monthLong(s2.last.p)}: ${ton} TBS terjual`, `${ton} TBS terjual`];
     },
@@ -1205,6 +1252,16 @@ function dataHeadline(id, d) {
       if (P.fertRows.length) return [`${P.fertRows.length} blok rutin dipanen, janjang di bawah standar`, `${P.fertRows.length} blok janjang rendah, perlu uji daun`];
       if (P.lowPct >= 10) return [`${fmt(P.lowPct, 0)}% luas blok di bawah standar janjang`];
       return P.best ? [`Blok ${P.best.name} paling produktif, ${fmt(P.best.jjgHa, 0)} jjg/ha/th`] : null; },
+    upkeep: () => { const UK = d.upkeepAnalysis; if (!UK) return null;
+      const c = UK.cur, recent = m => c && (c.p.y * 12 + c.p.m) - (m.y * 12 + m.m) <= 1;
+      const sp = UK.spikes.find(x => recent(x.p));   // judul hanya mengangkat lonjakan bulan laporan / bulan lalu
+      if (UK.curAbsurd) return [`Upkeep ${monthShort(c.p)} ${fmtRpShort(c.total)}, perlu dicek`, 'Biaya perawatan bulan ini tidak wajar'];
+      if (sp) return [`Biaya ${sp.name.toLowerCase()} ${monthShort(sp.p)} naik ${fmt(sp.ratio, 0)}×`, `Lonjakan biaya ${monthShort(sp.p)} perlu dicek`];
+      if (c && UK.avgPrev && UK.before.length >= 2) { const ch = (c.total - UK.avgPrev) / UK.avgPrev * 100;
+        return [`Biaya perawatan ${monthShort(c.p)} ${ch >= 0 ? 'naik' : 'turun'} ${fmt(Math.abs(ch), 0)}% dari biasanya`, `Biaya perawatan ${fmtRpShort(c.total)}`]; }
+      return c ? [`Biaya perawatan ${monthShort(c.p)} ${fmtRpShort(c.total)}`] : null; },
+    upkeepakt: () => { const UK = d.upkeepAnalysis, t = UK && UK.top[0]; if (!t) return null;
+      return [`${t.name} ${fmt(t.share, 0)}% biaya perawatan ${monthShort(UK.cur.p)}`, `${t.name} biaya perawatan terbesar`, 'Pekerjaan perawatan terbesar bulan ini']; },
     tanah: () => (!S ? null : S.unknownPct >= 50 ? [`${fmt(S.unknownPct, 0)}% luas belum ada data jenis tanah`, 'Jenis tanah sebagian besar belum tercatat']
       : S.dominant ? [`Tanah dominan ${S.dominant.name.toLowerCase()}, ${fmt(S.dominant.pct, 0)}% luas`, `Tanah dominan ${S.dominant.name.toLowerCase()}`] : null),
     pupuk: () => { const F2 = d.fertStatus; if (!F2) return null;
@@ -1304,7 +1361,7 @@ const SHORT_TITLES = {
   jjg: 'Janjang/ha', bjr: 'BJR', umur: 'Umur tanaman', umuryield: 'Umur vs yield', replanting: 'Replanting',
   alurjjg: 'Alur janjang', restan: 'Panen vs muat', tanpaberat: 'Tanpa berat', blokunsale: 'Blok tanpa jual',
   laba: 'Laba kotor', biayakg: 'Biaya per kg', efisiensi: 'Porsi biaya', biayakomposisi: 'Komposisi biaya', biayaha: 'Biaya per ha',
-  upkeep: 'Perawatan', margin: 'Margin per ha', mandorpanen: 'Mandor panen', mandormuat: 'Mandor muat', rawat: 'Mandor rawat'
+  upkeep: 'Perawatan per bulan', upkeepakt: 'Pekerjaan perawatan', margin: 'Margin per ha', mandorpanen: 'Mandor panen', mandormuat: 'Mandor muat', rawat: 'Mandor rawat'
 };
 function shortTitle(t, long) { return long ? t.title : (SHORT_TITLES[t.id] || t.title); }
 
@@ -1391,9 +1448,12 @@ const STORY = [
   { id: 'biayaha', section: 'Keuangan Kebun', title: 'Pendapatan vs Biaya per Hektar',
     q: 'Berapa pendapatan dan biaya setiap hektar per bulan?',
     link: 'Pendapatan/ha = yield × harga jual; dibandingkan dengan biaya per hektar.' },
-  { id: 'upkeep', section: 'Keuangan Kebun', title: 'Biaya Perawatan per Aktivitas',
-    q: 'Ke mana biaya perawatan paling banyak dibelanjakan (menurut kelompok aktivitas)?',
-    link: 'Rincian isi biaya perawatan.' },
+  { id: 'upkeep', section: 'Keuangan Kebun', title: 'Biaya Perawatan per Bulan',
+    q: 'Berapa biaya perawatan setiap bulan dan untuk pekerjaan apa (pemupukan, gulma, tanaman, jalan)?',
+    link: 'Rincian isi biaya perawatan per bulan dan kategori pekerjaan.' },
+  { id: 'upkeepakt', section: 'Keuangan Kebun', title: 'Pekerjaan Perawatan Bulan Laporan',
+    q: 'Pekerjaan perawatan apa yang paling besar bulan ini, dan mana yang melonjak dibanding biasanya?',
+    link: 'Membandingkan tiap pekerjaan dengan bulan lalu dan rata-rata untuk menemukan lonjakan atau salah input.' },
   { id: 'margin', section: 'Keuangan Kebun', title: 'Margin per Hektar',
     q: 'Berapa sisa uang per hektar setelah biaya, dan bulan mana yang merugi?',
     link: 'Hasil akhir keuangan per hektar: pendapatan dikurangi biaya.' },

@@ -53,7 +53,11 @@ const RECO_CATALOG = [
     signals: 'Produktivitas jauh di bawah standar Marihat untuk umurnya; yield turun/fluktuatif; porsi biaya pupuk besar tanpa kenaikan yield.',
     topics: ['yield', 'upkeep', 'umur'],
     when: d => { const y = signals(d.yield); const fert = upkeepItems(d).find(x => /fert|pupuk|pemupukan/i.test(x.name));
-      const M = d.marihat;
+      const M = d.marihat, UF = d.upkeepAnalysis && d.upkeepAnalysis.fert;
+      // Catatan upkeep per bulan: tidak ada / sudah lama tidak ada pemupukan
+      if (UF && UF.of >= 6 && (UF.months === 0 || UF.monthsSince >= 6)) return { evidence: UF.months === 0
+        ? `tidak ada biaya pemupukan dalam ${UF.of} bulan catatan upkeep` : `pemupukan terakhir ${monthLong(UF.last)}, ${UF.monthsSince} bulan sebelum bulan laporan (acuan 2–3 kali/tahun)`,
+        priority: M && M.reliable && M.achTon < 0.7 ? 'tinggi' : 'sedang' };
       if (M && M.reliable && M.achTon < 0.7) return { evidence: `produktivitas ${fmt(M.realTonHa, 1)} t/ha/th, baru ${fmtPct(M.achTon * 100, 0)} dari standar Marihat ${M.cls} (${fmt(M.pot.ton, 1)})${fert ? `; biaya pupuk ${fmtPct(fert.pct, 0)} upkeep` : ''}`, priority: M.achTon < 0.5 ? 'tinggi' : 'sedang' };
       return ['turun', 'fluktuatif'].indexOf(y.trend) >= 0
         ? { evidence: `yield ${y.trend}${fert ? `; biaya pupuk ${fmtRp(fert.value)} (${fmtPct(fert.pct, 0)} upkeep)` : ''}`, priority: 'sedang' } : null; } },
@@ -62,13 +66,16 @@ const RECO_CATALOG = [
     action: 'Kendalikan gulma di piringan dan pasar pikul agar panen dan pengutipan brondolan lancar.',
     signals: 'Biaya pemeliharaan (slashing/weeding) kecil atau tidak tercatat; produktivitas pemanen rendah.',
     topics: ['upkeep', 'mandorpanen'],
-    when: () => null },
+    when: d => { const U = d.upkeepAnalysis; if (!U || U.months.length < 6) return null;
+      const tot = U.months.reduce((a, m) => a + m.total, 0), g = U.catSeries.find(c => c.key === 'gulma');
+      const gs = g ? g.series.reduce((a, x) => a + x.value, 0) : 0;
+      return tot && gs / tot < 0.05 ? { evidence: `pengendalian gulma hanya ${fmt(gs / tot * 100, 0)}% biaya perawatan ${U.months.length} bulan (${fmtRp(gs)})`, priority: 'sedang' } : null; } },
 
   { code: 'R06', title: 'Perkuat pengendalian hama dan penyakit',
     action: 'Lakukan sensus hama (ulat api, tikus) dan deteksi dini Ganoderma; tindak sesuai ambang ekonomi.',
     signals: 'Biaya pestisida menjadi porsi terbesar atau meningkat; yield turun di blok tertentu.',
     topics: ['upkeep'],
-    when: d => { const top = upkeepItems(d)[0]; return top && /pest|hama|insek|fungi|herbi/i.test(top.name)
+    when: d => { const top = upkeepItems(d)[0]; return top && /pest|hama|insek|fungi|tikus|rodent|ulat|ganoderma/i.test(top.name)
       ? { evidence: `${top.name} porsi upkeep terbesar (${fmtPct(top.pct, 0)})`, priority: 'sedang' } : null; } },
 
   { code: 'R07', title: 'Rencanakan peremajaan (replanting) bertahap',
@@ -210,6 +217,18 @@ const RECO_CATALOG = [
       if (N.kurangHa) return { evidence: `dosis NPK ${fmt(N.actual, 1)} kg/pohon/tahun di bawah acuan untuk ${fmt(N.kurangHa, 1)} ha; risiko produksi turun`, priority: 'tinggi' };
       if (N.lebihHa) return { evidence: `dosis NPK ${fmt(N.actual, 1)} kg/pohon/tahun di atas acuan untuk ${fmt(N.lebihHa, 1)} ha${N.lebihRp ? ` (≈ ${fmtRp(N.lebihRp)}/tahun terbuang)` : ''}`, priority: 'tinggi' };
       return null; } },   // tanpa dosis aktual yang menyimpang, cukup R23 (uji daun & tanah) agar pesan tidak bertumpuk
+
+  { code: 'R25', title: 'Cocokkan biaya perawatan yang melonjak',
+    action: 'Cocokkan pekerjaan perawatan yang biayanya melonjak dengan bukti kerja (hari kerja, luas, bahan) dan perbaiki bila salah input sebelum dibayar atau dilaporkan.',
+    signals: 'Biaya satu pekerjaan atau total upkeep satu bulan berlipat dari biasanya; total upkeep berbeda antar-tabel.',
+    topics: ['upkeepakt', 'upkeep'],
+    when: d => { const U = d.upkeepAnalysis; if (!U) return null;
+      const s = U.spikes[0], ms = U.monthSpikes[0], x = U.crossMismatch[0];
+      const inRep = s && U.cur && mkey(s.p) === mkey(U.cur.p);
+      if (s) return { evidence: `${s.name} ${monthLong(s.p)} ${fmtRp(s.cost)}, ${fmt(s.ratio, 0)}× median bulan lain (${fmtRp(s.median)})${U.spikes.length > 1 ? `; ${U.spikes.length - 1} lonjakan lain` : ''}`, priority: inRep || s.cost > 1e8 ? 'tinggi' : 'sedang' };
+      if (ms) return { evidence: `total upkeep ${monthLong(ms.p)} ${fmtRp(ms.total)}${ms.perHa ? ` (${fmtRp(ms.perHa)}/ha)` : ''}`, priority: 'tinggi' };
+      if (x) return { evidence: `total upkeep ${monthShort(x.p)} ${fmtRp(x.upkeep)} vs biaya perawatan di tabel biaya ${fmtRp(x.biaya)}`, priority: 'sedang' };
+      return null; } },
 
   { code: 'R17', title: 'Pertahankan praktik yang sudah baik',
     action: 'Dokumentasikan praktik panen dan perawatan yang membuat kinerja naik agar tetap dijalankan.',

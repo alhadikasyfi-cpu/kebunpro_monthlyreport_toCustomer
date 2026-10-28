@@ -215,6 +215,7 @@ function checkProjectFiles() {
   if (typeof marihatAt !== 'function') missing.push('8_StandarMarihat.gs');
   if (typeof buildFertilizerStatus !== 'function') missing.push('9_TanahPupuk.gs');
   if (typeof buildBlockProduction !== 'function') missing.push('10_ProduksiBlok.gs');
+  if (typeof buildUpkeepAnalysis !== 'function') missing.push('11_BiayaPerawatan.gs');
   if (missing.length) throw new Error(`File script belum lengkap di proyek Apps Script: ${missing.join(', ')}. ` +
     'Tambahkan file tersebut (Editor > + > Skrip, nama file sama persis tanpa ".gs") lalu tempel isinya, simpan, dan jalankan ulang.');
 }
@@ -279,7 +280,10 @@ function getSheetData(sheet) {
       return { p: x.p, label: x.label, value: x.value === null && nw === null ? null : (x.value || 0) + (nw || 0) }; });
   }
 
-  // Periode tabel upkeep per aktivitas: dicocokkan dengan biaya upkeep bulanan (satu bulan, atau total seluruh bulan)
+  // Tabel upkeep format baru: per bulan, rincian "jenis pekerjaan; biaya" + total (file 11). Format lama tetap dibaca.
+  d.upkeepMonthly = readUpkeepMonthly(values, display);
+  if (d.upkeepMonthly) d.upkeep = null;
+  // Periode tabel upkeep per aktivitas (format lama): dicocokkan dengan biaya upkeep bulanan (satu bulan, atau total seluruh bulan)
   d.upkeepPeriod = DECK_CONFIG.UPKEEP_ACTIVITY_PERIOD;
   if (d.upkeep && d.costUpkeep.length) {
     const tot = d.upkeep.rows.reduce((a, r) => a + (parseNum(r[1]) || 0), 0);
@@ -291,13 +295,18 @@ function getSheetData(sheet) {
   }
 
   // Bulan berjalan (belum lengkap) dikeluarkan dari analisis
-  d.partialMonth = null;
+  d.partialMonth = null; d.currentMonthIncluded = null;
   if (DECK_CONFIG.EXCLUDE_CURRENT_MONTH) {
-    const now = new Date();
+    const now = refToday();
     const cur = { y: now.getFullYear(), m: now.getMonth() };
     // semua seri bulanan (array berisi {p, value}) ikut disaring
     const seriesKeys = Object.keys(d).filter(k => Array.isArray(d[k]) && d[k].length && d[k][0] && d[k][0].p);
-    if (seriesKeys.some(k => d[k].some(x => mkey(x.p) === mkey(cur)))) {
+    const hasCur = seriesKeys.some(k => d[k].some(x => mkey(x.p) === mkey(cur)));
+    if (hasCur && !isPartialMonth(cur)) {
+      // Sudah lewat tanggal batas: bulan berjalan ikut dianalisis, dengan catatan angkanya masih bisa bertambah
+      d.currentMonthIncluded = { p: cur, day: now.getDate() };
+      RUN_WARNINGS.push(`${monthLong(cur)} ikut dianalisis karena sudah ${now.getDate()} hari berjalan (> ${DECK_CONFIG.PARTIAL_MONTH_MIN_DAY}); angka bulan ini masih bisa bertambah sampai akhir bulan.`);
+    } else if (hasCur) {
       d.partialMonth = monthLong(cur);
       // Bulan berjalan tidak dianalisis, tetapi penjualannya dipakai untuk mengecek sisa panen bulan laporan yang baru terjual
       const pv = k => valAt(d[k] || [], cur);
@@ -338,6 +347,29 @@ function getSheetData(sheet) {
       d.featureNotes.push(`${name} bernilai 0 di semua bulan: customer belum memakai fitur pencatatan ${name}, sehingga total biaya belum mencakup komponen ini`);
     }
   });
+
+  // Biaya pekerja per ha yang tidak masuk akal dalam satu bulan (mis. Rp23 juta/ha) = salah input:
+  // bulan itu tidak dipakai untuk laba, biaya per kg, dan biaya per ha (tetap dilaporkan sebagai temuan data)
+  d.costOutliers = [];
+  const costMax = DECK_CONFIG.THRESHOLDS.COST_MAX_RP_HA_MONTH;
+  d.costHa.forEach(x => {
+    const ha = valAt(d.luasPanen, x.p), tot = valAt(d.costTotal, x.p);
+    const perHa = x.value !== null ? x.value : (ha && tot !== null ? tot / ha : null);
+    if (perHa === null || perHa <= costMax) return;
+    d.costOutliers.push({ p: x.p, perHa, total: tot, upkeep: valAt(d.costUpkeep, x.p) });
+    ['costTotal', 'costUpkeep', 'costHa', 'upahKg'].forEach(k => { d[k] = d[k].map(y => (mkey(y.p) === mkey(x.p) ? { p: y.p, label: y.label, value: null } : y)); });
+  });
+  d.costOutliers.forEach(o => d.zeroFixes.push(`biaya pekerja ${monthLong(o.p)} ${fmtRp(o.total)} (${fmtRp(o.perHa)}/ha sebulan${o.upkeep ? `, termasuk perawatan ${fmtRp(o.upkeep)}` : ''}) tidak wajar; kemungkinan salah input, sehingga bulan ini tidak dipakai untuk laba dan biaya per kg`));
+
+  // Bulan laporan = bulan terakhir yang punya data panen/penjualan di tabel utama (dipakai seragam di seluruh deck)
+  const lastOf = s => (s || []).filter(x => x.value !== null && x.value !== 0).pop();
+  const lastP = [d.flowPanen, d.totalJjg, d.tonase, d.saleJjg, d.flowSold].map(lastOf).filter(Boolean).map(x => x.p)
+    .sort((a, b) => (b.y * 12 + b.m) - (a.y * 12 + a.m))[0];
+  d.reportP = lastP || null;
+  if (!d.reportP && ![d.yield, d.luasPanen, d.revenueIdr, d.costTotal].some(s => (s || []).some(x => x.value !== null))) {
+    throw new Error(`Sheet "${d.sheetName || sheet.getName()}" tidak berisi tabel bulanan customer (kolom year_month, total_janjang, dst.). ` +
+      'Buka sheet customer yang akan dibuat laporannya, lalu jalankan menu lagi.');
+  }
 
   // Metrik turunan
   // Produksi: pakai tonase aktual bila ada, jika tidak estimasi yield × luas panen
@@ -424,6 +456,7 @@ function getSheetData(sheet) {
   d.fertilizer = buildFertilizerNeed(d);
   d.npk = d.fertilizer;
   d.blockProd = buildBlockProduction(d);   // produksi per blok (file 10), bukti untuk status pupuk
+  d.upkeepAnalysis = buildUpkeepAnalysis(d);   // biaya perawatan per bulan (file 11), juga bukti pemupukan
   d.fertStatus = buildFertilizerStatus(d);
   d.flow = buildFlow(d);
   // Tonase = berat janjang DIPANEN: penjualan hanya dari janjang yang terjual -> tonase × (terjual ÷ dipanen) × harga
@@ -580,7 +613,7 @@ var MANDOR_REF_DATE = null;
 
 function mandorPeriodMonth(label) {
   const t = norm(label);
-  const now = MANDOR_REF_DATE || new Date();
+  const now = MANDOR_REF_DATE || refToday();
   const back = t.indexOf('2 bulan lalu') >= 0 ? 2 : t.indexOf('bulan lalu') >= 0 ? 1 : t.indexOf('bulan ini') >= 0 ? 0 : null;
   if (back !== null) {
     const m = now.getMonth() - back;
@@ -607,13 +640,14 @@ function parseMandorCell(v) {
 function parseMandorTable(t) {
   if (!t || !t.rows.length) return null;
   const h = t.headers.map(norm);
-  const nowKey = mkey({ y: new Date().getFullYear(), m: new Date().getMonth() });
   if (h.some(x => x.indexOf('bulan') >= 0) || h.slice(1).some(x => parseMonth(x))) {
     const periods = t.headers.slice(1).map(l => {
       const p = mandorPeriodMonth(l);
-      return { label: p ? monthShort(p) : l, p, partial: !!(p && DECK_CONFIG.EXCLUDE_CURRENT_MONTH && mkey(p) === nowKey) };
+      return { label: p ? monthShort(p) : l, p, partial: isPartialMonth(p) };
     });
-    const rows = t.rows.filter(r => !isBlank(r[0])).map(r => ({ name: r[0], vals: r.slice(1).map(parseMandorCell) }));
+    // Baris berisi angka tetapi nama mandor kosong tetap dihitung sebagai "Tanpa nama" (bukan dibuang)
+    const rows = t.rows.filter(r => !isBlank(r[0]) || r.slice(1).some(v => parseMandorCell(v)))
+      .map(r => ({ name: isBlank(r[0]) ? 'Tanpa nama' : r[0], vals: r.slice(1).map(parseMandorCell) }));
     return rows.length ? { periods, rows } : null;
   }
   const iDays = h.findIndex(x => x.indexOf('hari kerja') >= 0), iRate = h.findIndex(x => x.indexOf('jjg') >= 0);
@@ -799,7 +833,7 @@ function checkDataCompleteness(d) {
     ['biaya pekerja per kg', d.upahKg], ['pendapatan per ha', d.revHa], ['biaya per ha', d.costHa]
   ];
   const missing = need.filter(([, s]) => !s || !s.length || s.every(x => x.value === null || x.value === '')).map(([n]) => n);
-  [['upkeep cost', d.upkeep], ['mandor panen', d.panen], ['mandor muat', d.muat], ['mandor rawat', d.rawat]]
+  [['upkeep cost', d.upkeep || (d.upkeepMonthly ? { rows: d.upkeepMonthly } : null)], ['mandor panen', d.panen], ['mandor muat', d.muat], ['mandor rawat', d.rawat]]
     .forEach(([n, t]) => { if (!t || !t.rows.length) missing.push(n); });
   return missing;
 }
@@ -964,10 +998,9 @@ function describeUnsale(d) {
  */
 function parseRawatTable(t) {
   if (!t || !t.rows.length || t.headers.length < 2) return null;
-  const nowKey = mkey({ y: new Date().getFullYear(), m: new Date().getMonth() });
   const periods = t.headers.slice(1).map(l => {
     const p = mandorPeriodMonth(l);
-    return { label: p ? monthShort(p) : l, p, partial: !!(p && DECK_CONFIG.EXCLUDE_CURRENT_MONTH && mkey(p) === nowKey) };
+    return { label: p ? monthShort(p) : l, p, partial: isPartialMonth(p) };
   });
   const cell = v => {
     const s = String(v || '').trim();
@@ -1292,6 +1325,7 @@ function mergeMandorTables(data) {
 
 /** Upkeep: [{name, value, pct}] terurut terbesar. */
 function upkeepItems(data) {
+  if (data.upkeepAnalysis) return upkeepItemsMonthly(data);   // format baru: rincian bulan laporan
   if (!data.upkeep) return [];
   const items = data.upkeep.rows.map(r => ({ name: r[0] || '-', value: parseNum(r[1]) })).filter(x => x.value !== null);
   const total = items.reduce((s, x) => s + x.value, 0);

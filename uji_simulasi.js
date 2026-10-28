@@ -261,7 +261,7 @@ ok(/▲ 20%/.test(cmp.req) && /Sep 26 \(bulan laporan\)/.test(cmp.req) && cmp.te
 // 10. Uji integrasi: file 1–9 ASLI (tanpa tiruan) dengan sheet tiruan berformat terbaru (blok + jenis tanah)
 const ctx2 = Object.assign({}, ctx); delete ctx2.sheet; vm.createContext(ctx2);
 for (const f of ['1_ConfigAndStyle.gs', '3_TextAndDataMapper.gs', '4_ClaudeBridge.gs', '5_MainController.gs', '6_ShapeCharts.gs',
-                 '7_RecommendationCatalog.gs', '8_StandarMarihat.gs', '9_TanahPupuk.gs', '10_ProduksiBlok.gs']) vm.runInContext(fs.readFileSync(OUT + f, 'utf8'), ctx2, { filename: f });
+                 '7_RecommendationCatalog.gs', '8_StandarMarihat.gs', '9_TanahPupuk.gs', '10_ProduksiBlok.gs', '11_BiayaPerawatan.gs']) vm.runInContext(fs.readFileSync(OUT + f, 'utf8'), ctx2, { filename: f });
 vm.runInContext('function setupTemplate() {}', ctx2);   // file 2 (SlidesApp/Drive) tidak dijalankan di Node
 const W = 20, blank = () => Array(W).fill('');
 const G = []; for (let i = 0; i < 60; i++) G.push(blank());
@@ -463,6 +463,59 @@ ctx2.longRows = longRows;
 const anomFs = run2(`(function(){ RUN_WARNINGS = []; const b = new SlideBatch('pg','an'); drawAnomalyTable(b, longRows, null);
   const f = b.req.filter(r => r.updateTextStyle && r.updateTextStyle.style && r.updateTextStyle.style.fontSize).map(r => r.updateTextStyle.style.fontSize.magnitude); return { min: Math.min.apply(null, f), warn: RUN_WARNINGS.join(' ') }; })()`);
 ok(anomFs.min < 10.1 && !/melebihi tinggi slide/.test(anomFs.warn), `tabel temuan panjang: huruf diperkecil ke ${anomFs.min} pt agar tidak terpotong footer`);
+
+// 10g. Bulan berjalan: ikut dianalisis bila sudah lewat tanggal 25
+const partialAt = day => run2(`(function(){ DECK_CONFIG.TODAY = '2026-10-${day}'; const r = isPartialMonth({ y: 2026, m: 9 }); DECK_CONFIG.TODAY = null; return r; })()`);
+ok(partialAt('20') === true && partialAt('25') === true && partialAt('26') === false && partialAt('28') === false &&
+   run2(`(function(){ DECK_CONFIG.TODAY = '2026-10-28'; const r = isPartialMonth({ y: 2026, m: 8 }); DECK_CONFIG.TODAY = null; return r; })()`) === false,
+  'bulan berjalan: tanggal ≤ 25 dikecualikan, tanggal 26–31 ikut dianalisis (28 Oktober -> Oktober masuk)');
+const GO = G.map(r => r.slice()); GO[11][0] = new Date(2026, 9, 1); GO[11][5] = 9999;
+ctx2.sheetO = { getName: () => 'Kebun Uji', getDataRange: () => ({ getValues: () => GO.map(r => r.slice()), getDisplayValues: () => GO.map(r => r.map(v => (v instanceof Date ? '01/10/2026' : typeof v === 'number' ? String(v) : v))) }), getRange: () => ({ getValue: () => '' }) };
+const monthsAt = day => run2(`(function(){ DECK_CONFIG.TODAY = '2026-10-${day}'; RUN_WARNINGS = []; const d = loadSheetData(sheetO); DECK_CONFIG.TODAY = null;
+  return { last: monthShort(d.totalJjg[d.totalJjg.length - 1].p), partial: d.partialMonth, inc: !!d.currentMonthIncluded, w: RUN_WARNINGS.join(' ') }; })()`);
+const m20 = monthsAt('20'), m28 = monthsAt('28');
+ok(m20.last === 'Sep 26' && m20.partial === 'Oktober 2026' && m28.last === 'Okt 26' && m28.inc && /ikut dianalisis karena sudah 28 hari/.test(m28.w),
+  `data Oktober: tgl 20 -> bulan terakhir ${m20.last} (Okt dikecualikan); tgl 28 -> bulan terakhir ${m28.last} (ikut dianalisis)`);
+
+// 10h. Upkeep per bulan (file 11): parser, kamus pekerjaan, lonjakan, nilai tidak wajar, bukti pemupukan, rekomendasi
+const upG = [['Upkeep Cost 12 bulan juga', '', ''], ['month', 'activity_group (name; cost)', 'total_cost']];
+const upRows = [[3, 'PRUNING; 2000000, SLASHING; 3000000, FERTILIZING; 1500000', 6500000], [4, 'PRUNINIG; 2100000, SLASHING; 2900000', 5000000],
+  [5, 'SLASHING; 178482500, SPRAYING; 1000000, PRUNING; 1900000', 181382500], [6, 'SLASHING; 3100000, PRUNING; 2000000, LATE_ROTATION_SHRUB_PRUNING; 500000', 5600000],
+  [7, 'SLASHING; 2800000, PRUNING; 2200000', 5000000], [8, 'SLASHING; 3000000, PRUNING; 2000000, ROAD_MAINTENANCE; 1000000', 6000000]];
+upRows.forEach(([m, t, tot]) => upG.push([new Date(2026, m, 1), t, tot]));
+ctx2.upV = upG; ctx2.upD = upG.map(r => r.map(v => (v instanceof Date ? `01/${String(v.getMonth() + 1).padStart(2, '0')}/2026` : String(v))));
+const UM = run2('readUpkeepMonthly(upV, upD)');
+ok(UM.length === 6 && UM[1].items.find(i => i.code === 'PRUNING').name === 'Penunasan' && UM[1].total === 5000000 && UM[3].items.some(i => i.name === 'Penunasan rotasi terlambat' && i.cat === 'tanaman'),
+  'tabel upkeep per bulan terbaca; kode diterjemahkan (PRUNINIG -> Penunasan, LATE_ROTATION_SHRUB_PRUNING -> Penunasan rotasi terlambat)');
+ctx2.dUp = { upkeepMonthly: UM, totalJjg: UM.map(m => ({ p: m.p, value: 1000 })), flowPanen: [], yield: [], produksi: UM.map(m => ({ p: m.p, value: 50 })),
+  luasPanen: [], costUpkeep: UM.map(m => ({ p: m.p, value: m.p.m === 7 ? 9000000 : m.total })), marihat: { area: 100 }, blocks: null };
+const UA = run2('buildUpkeepAnalysis(dUp)');
+ok(UA.cur && UA.cur.label === 'Sep 26' && UA.prev.label === 'Agu 26' && UA.spikes[0].name === 'Pembabatan' && UA.spikes[0].p.m === 5 &&
+   UA.crossMismatch.length === 1 && UA.fert.months === 1 && UA.fert.monthsSince === 5,
+  `analisis upkeep: lonjakan ${UA.spikes[0].name} Jun ${Math.round(UA.spikes[0].ratio)}×, beda antar-tabel ${UA.crossMismatch.length} bulan, pemupukan ${UA.fert.months}/${UA.fert.of} bln (terakhir ${UA.fert.monthsSince} bln lalu)`);
+ctx2.dUp.upkeepAnalysis = UA;
+ok(/PERLU DICEK: biaya Pembabatan Juni 2026/.test(run2('describeUpkeepMonthly(dUp)')) && run2(`RECO_CATALOG.find(r => r.code === 'R25').when(dUp)`).evidence.indexOf('Pembabatan') === 0,
+  'lonjakan biaya ditandai PERLU DICEK dan memicu R25 (cocokkan biaya dengan bukti kerja)');
+ctx2.dUp2 = Object.assign({}, ctx2.dUp, { upkeepMonthly: UM.concat([{ p: { y: 2026, m: 9 }, label: 'Okt 26', items: [{ code: 'X', name: 'X', cat: 'lain', cost: 7.5e11 }], itemSum: 7.5e11, total: 7.5e11 }]),
+  totalJjg: ctx2.dUp.totalJjg.concat([{ p: { y: 2026, m: 9 }, value: 1000 }]) });
+const UA2 = run2('buildUpkeepAnalysis(dUp2)');
+ok(UA2.curAbsurd && UA2.totalSeries[UA2.totalSeries.length - 1].value === null && UA2.avgPrev < 1e8 && /TIDAK WAJAR/.test(run2('describeUpkeepMonthly(Object.assign({}, dUp2, { upkeepAnalysis: buildUpkeepAnalysis(dUp2) }))')),
+  'upkeep Rp750 miliar (Rp7,5 miliar/ha sebulan) ditandai TIDAK WAJAR dan tidak dipakai sebagai pembanding/grafik');
+ok(run2(`RECO_CATALOG.find(r => r.code === 'R06').when({ upkeepAnalysis: { cur: { total: 1, items: [{ name: 'Penyemprotan herbisida', cost: 1, cat: 'gulma' }] }, months: [1] } })`) === null,
+  'R06 (hama & penyakit) tidak terpicu oleh penyemprotan herbisida (itu pengendalian gulma)');
+const evPupuk = run2(`buildFertilizerStatus(Object.assign({}, D2, { upkeepAnalysis: { months: [1,2,3,4,5,6], fert: { months: 0, of: 6, last: null, monthsSince: null, rp: 0, perYear: 0 } } })).evidence.find(e => e.indikator === 'Pemupukan tercatat')`);
+ok(evPupuk.arah === 'kurang' && /tidak ada dalam 6 bulan/.test(evPupuk.kebun), 'tidak ada biaya pemupukan dalam 6 bulan upkeep -> bukti indikasi kurang pupuk');
+ok(run2('arrowPct(1859)') === '▲ 20×' && run2('arrowPct(-30)') === '▼ 30%', 'kenaikan > 5 kali ditulis "▲ 20×", bukan persen ribuan');
+
+// 10i. Biaya pekerja tidak wajar (Rp23 juta/ha sebulan) tidak dipakai untuk laba; KPI menyebut bulan laporan yang belum tercatat
+const GC = G.map(r => r.slice()); GC[32][11] = 1.2e9; GC[32][15] = 1.2e9 / 53;   // Sep: total biaya Rp1,2 miliar di 53 ha
+ctx2.sheetC = { getName: () => 'Kebun Uji', getDataRange: () => ({ getValues: () => GC.map(r => r.slice()), getDisplayValues: () => GC.map(r => r.map(v => (typeof v === 'number' ? String(v) : v))) }), getRange: () => ({ getValue: () => '' }) };
+const DC = run2('loadSheetData(sheetC)');
+ok(DC.costOutliers.length === 1 && DC.profit.find(x => x.p.m === 8).value === null && DC.zeroFixes.some(z => /biaya pekerja September 2026 .* tidak wajar/.test(z)),
+  'biaya pekerja Rp22,6 juta/ha sebulan ditandai tidak wajar; laba bulan itu tidak dihitung');
+const kpOct = run2(`computeOwnerKpis(Object.assign({}, D2, { reportP: { y: 2026, m: 9 } }))`);
+ok(kpOct.filter(k => / Sep 26$/.test(k.name)).every(k => /^Okt 26 belum tercatat · /.test(k.note)) && kpOct.some(k => / Sep 26$/.test(k.name)),
+  'KPI dari bulan sebelum bulan laporan diberi keterangan "Okt 26 belum tercatat"');
 
 // 11. Produksi per blok (janjang dipanen per blok) + kaitan dengan status pupuk
 const pb = run2(`parseBlocks('F10, 3.39 ha, 2012, -, 342; B8, 1.49 ha, 2017, -; Blok Pasar Bingung, 5 ha, 2009, Gambut, 1084')`);

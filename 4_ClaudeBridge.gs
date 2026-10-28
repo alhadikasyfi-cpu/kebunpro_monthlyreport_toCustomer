@@ -195,7 +195,7 @@ function buildClaudePacket(data, plan) {
   ].join('\n')).join('\n');
 
   const body = `
-PROFIL: kebun ${data.title}${data.location ? `, lokasi ${data.location}` : ' (lokasi tidak dicatat)'}; data ${scope}, ${data.months} bulan lengkap${data.partialMonth ? ` (${data.partialMonth} bulan berjalan, tidak dianalisis)` : ''}.${data.snapshot ? `
+PROFIL: kebun ${data.title}${data.location ? `, lokasi ${data.location}` : ' (lokasi tidak dicatat)'}; data ${scope}, ${data.months} bulan lengkap${data.partialMonth ? ` (${data.partialMonth} bulan berjalan, tidak dianalisis)` : ''}${data.currentMonthIncluded ? ` (${monthLong(data.currentMonthIncluded.p)} masih berjalan, data s.d. tanggal ${data.currentMonthIncluded.day}; ikut dianalisis, angkanya masih bisa bertambah)` : ''}${data.reportP ? ` BULAN LAPORAN: ${monthLong(data.reportP)} (pakai bulan ini di judul, KPI, dan ringkasan; bila suatu angka belum tercatat di bulan ini, sebutkan terus terang).` : ''}${data.snapshot ? `
 MODE RINGKASAN: data kurang dari ${DECK_CONFIG.MIN_MONTHS_FOR_TREND} bulan. JANGAN menyimpulkan tren naik/turun; fokus pada kondisi saat ini, perbandingan dengan acuan umur tanaman, dan kelengkapan data. Pilih trend "data kurang".` : ''}
 ASAL TONASE: janjang ${DECK_CONFIG.TONASE_BASIS === 'terjual' ? 'TERJUAL' : 'DIPANEN'} (pakai penjelasan yang sesuai di panduan, bagian pengetahuan agronomi).
 
@@ -532,6 +532,7 @@ const NOTES_RECO = {
   umuryield: { default: 'Saran tindakan: bandingkan yield bulan yang didominasi blok tua dengan bulan yang didominasi blok muda.' },
   replanting: { default: 'Saran tindakan: prioritaskan peremajaan blok terluas dan tertua.' },
   upkeep: { default: 'Saran tindakan: evaluasi aktivitas dengan porsi biaya terbesar terhadap jadwal dan hasil kerja.' },
+  upkeepakt: { default: 'Saran tindakan: cocokkan pekerjaan yang melonjak dengan bukti kerja (HK, luas, bahan) sebelum dibayar.' },
   biayakg: { default: 'Saran tindakan: pantau kenaikan upah per kg agar sebanding dengan harga jual TBS.' },
   efisiensi: { naik: 'Saran tindakan: porsi upah meningkat; tinjau tarif dan output per hari kerja.',
                default: 'Saran tindakan: tetapkan batas porsi upah terhadap harga jual sebagai alarm bulanan.' },
