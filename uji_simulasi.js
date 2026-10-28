@@ -304,7 +304,7 @@ ok(D2.soil && D2.soil.groups.map(g => g.name).join() === 'Gambut,Podsolik Merah 
   `jenis tanah: ${D2.soil && D2.soil.groups.map(g => `${g.name} ${g.ha} ha`).join(', ')}`);
 ok(D2.fertilizer && D2.fertilizer.totalTon > 0 && D2.fertilizer.haNoAge === 5, `kebutuhan pupuk indikatif ${D2.fertilizer && D2.fertilizer.totalTon.toFixed(1)} ton/tahun (blok tanpa tahun tanam tidak dihitung)`);
 const c2 = D2.flow.cur, p2 = D2.flow.prev;
-ok(c2 && c2.p.m === 8 && c2.pendingJjg === 6600 - 5200 && c2.lossJjg === 1850 && p2.p.m === 7 && p2.pendingJjg === 6100 - 5600 && p2.lossJjg === 1350 && c2.lossRp < D2.flow.lossRp,
+ok(c2 && c2.p.m === 8 && c2.lossJjg === 0 && c2.agedStock === 0 && c2.pendingJjg === c2.balance && c2.balance === 3250 && p2.p.m === 7 && p2.lossJjg === 0 && p2.pendingJjg === 1850,
   `kebocoran per bulan: Sep 26 belum terjual ${c2 && c2.pendingJjg} + tertahan >1 bln ${c2 && c2.lossJjg} jjg vs Agu 26 ${p2 && p2.lossJjg} jjg (bukan kumulatif ${D2.flow.lossJjg} jjg)`);
 // Restan terbawa: panen Jun belum terjual lalu terjual Jul -> Jun "belum terjual" (bukan kerugian), Jul tidak ada kerugian
 const pm = m => ({ y: 2026, m }), ser = arr => arr.map((v, i) => ({ p: pm(5 + i), label: 'x', value: v }));
@@ -317,12 +317,13 @@ ctx2.dR.flowSold = ser([0, 20000, 19000]); ctx2.dR.flowMuat = ser([0, 20000, 190
 const FR2 = run2('buildFlow(dR)').monthly;
 ctx2.dR.partialFlow = { p: pm(8), panen: 2000, sold: 12000 };
 const FR3 = run2('buildFlow(dR)').cur;
-ok(FR3.soldLater === 10000 && FR3.lossJjg === 21000 - 10000 && FR3.pendingJjg === 1000,
+ok(FR3.soldLater === 10000 && FR3.lossJjg === 0 && FR3.agedStock === 0 && FR3.pendingJjg === 20000 - 8000,
   `sisa yang sudah terjual di bulan berjalan tidak dihitung kerugian: ${FR3.soldLater} jjg terjual Sep -> tertahan ${FR3.lossJjg} jjg`);
 delete ctx2.dR.partialFlow;
-ok(FR2[2].lossJjg === 18000 + 3000 && FR2[2].pendingJjg === 1000 && FR2[2].lossRp > 0, `panen Jun (dan sisa Jul) tak terjual -> Agu tertahan >1 bulan ${FR2[2].lossJjg} jjg (indikasi hilang)`);
-const k2 = run2('computeOwnerKpis(D2)').find(k => /janjang/i.test(k.name));
-ok(k2 && /Sep 26/.test(k2.name) && /vs Agu 26/.test(k2.note), `KPI kebocoran: ${k2 && `${k2.name} ${k2.value} ${k2.unit} | ${k2.note}`}`);
+ok(FR2[2].lossJjg === 2000 && FR2[2].agedStock === 2000 && FR2[2].pendingJjg === 20000 && FR2[2].lossRp > 0,
+  `janjang lama terjual lebih dulu: Jul menjual sisa Jun dulu, Agu baru tertahan >1 bulan ${FR2[2].lossJjg} jjg (jumlah minimal), panen Agu belum terjual ${FR2[2].pendingJjg}`);
+const k2 = run2('computeOwnerKpis(D2)').find(k => /janjang|belum terjual/i.test(k.name));
+ok(k2 && /Sep 26/.test(k2.name) && /pantau penjualan/.test(k2.note), `KPI kebocoran: ${k2 && `${k2.name} ${k2.value} ${k2.unit} | ${k2.note}`}`);
 ok(P2.mains.every(m => m.summary && m.summary.rows.some(r => r.cur !== null)), `semua slide utama punya grafik kesimpulan: ${P2.mains.map(m => m.id + '=' + (m.summary ? m.summary.rows.length : 0)).join(', ')}`);
 ok(P2.appendix.some(t => t.id === 'tanah') && P2.appendix.some(t => t.id === 'pupuk') && P2.appendix.find(t => t.id === 'tanah').mainOf.id === 'm_penyebab', 'lampiran Jenis Tanah & Kebutuhan Pupuk masuk tema Penyebab');
 const pk2 = run2('buildClaudePacket(D2, P2)');
@@ -431,7 +432,7 @@ ctx2.dG = { flowPanen: [ser([1713, 66])[0], ser([1713, 66])[1], { p: pm(8), labe
 ctx2.dG.flowMuat = [{ p: pm(5), value: 0 }, { p: pm(6), value: 0 }, { p: pm(8), value: 3033 }].map(x => Object.assign({ label: 'x' }, x));
 ctx2.dG.flowSold = ctx2.dG.flowMuat;
 const FG = run2('buildFlow(dG)');
-ok(FG.cur.afterGap && FG.cur.carryIn === 0 && FG.cur.lossJjg === 0 && FG.cur.pendingJjg === 1109 && /Pembanding terakhir/.test(run2('describeFlow({ flow: buildFlow(dG) })')),
+ok(FG.cur.afterGap && FG.cur.carryIn === 0 && FG.cur.lossJjg === 0 && FG.cur.pendingJjg === 1109 && FG.monthly.filter(s => s.salesMissing).length === 2 && !FG.prev,
   'bulan kosong di antaranya (Agustus): sisa Juni–Juli tidak dibawa ke September, pembanding disebut "terakhir"');
 
 // BJR di atas batas wajar (> 35 kg) tidak dipakai dan ditandai
@@ -517,6 +518,45 @@ const kpOct = run2(`computeOwnerKpis(Object.assign({}, D2, { reportP: { y: 2026,
 ok(kpOct.filter(k => / Sep 26$/.test(k.name)).every(k => /^Okt 26 belum tercatat · /.test(k.note)) && kpOct.some(k => / Sep 26$/.test(k.name)),
   'KPI dari bulan sebelum bulan laporan diberi keterangan "Okt 26 belum tercatat"');
 
+// 10j. Hasil audit data asli
+// Penjualan belum diinput (muat = jual = tonase = 0): tidak dinilai, panen dibawa ke bulan berikutnya (pola Mahato Jun -> Jul)
+ctx2.dM = { flowPanen: ser([18332, 22995, 20000]), flowMuat: ser([0, 40000, 19000]), flowTrip: [], flowSold: ser([0, 40000, 19000]), flowSoldNoWeight: [],
+  produksi: ser([null, 726, 330]), tonase: ser([0, 726, 330]), bjr: [], hargaJual: ser([2900, 2900, 2900]), revKg: [], totalJjg: [], bjrSoldMonthly: [] };
+const FM = run2('buildFlow(dM)');
+ok(FM.monthly[0].salesMissing && FM.monthly[0].lossJjg === 0 && !FM.monthly[1].overSold && FM.monthly[1].carrySold === 18332 && FM.cur.p.m === 7,
+  'bulan tanpa penjualan diinput (Jun) tidak dinilai; Juli menjual sisa Juni sehingga tidak dianggap "terjual melebihi dipanen"');
+ctx2.dM.flowMuat = ser([20000, 23000, 0]); ctx2.dM.flowSold = ser([18000, 22000, 0]); ctx2.dM.tonase = ser([300, 400, 0]);
+const FM2 = run2('buildFlow(dM)');
+ok(FM2.cur.p.m === 6 && FM2.salesMissing.length === 1 && /PENJUALAN BELUM DIINPUT: Agustus 2026/.test(run2('describeFlow({ flow: buildFlow(dM) })')),
+  'bulan terakhir dengan penjualan belum diinput: kebocoran memakai bulan terakhir yang terukur, bukan "kerugian" (pola Mutiara Okt)');
+// Upkeep: kode varian digabung; "baru bulan ini" hanya bila memang belum pernah ada; bulan lonjakan tidak masuk "biasanya"
+ok(run2(`parseUpkeepItems('SPRAYING; 2560000, SPRAYING_TOTAL; 1990000, ROAD_MAINTENNANCE; 100, ROAD_MAINTENANCE; 4290000').map(i => i.code + ':' + i.cost).join()`) === 'SPRAYING:4550000,ROAD_MAINTENANCE:4290100',
+  'kode varian digabung (SPRAYING_TOTAL -> SPRAYING, ROAD_MAINTENNANCE -> ROAD_MAINTENANCE)');
+const UT = run2(`(function(){ const mk = (m, t) => ({ p: { y: 2026, m }, label: 'b' + m, items: parseUpkeepItems(t), total: parseUpkeepItems(t).reduce((a, x) => a + x.cost, 0) });
+  const M = [mk(5, 'ROAD_MAINTENANCE; 350000000, PRUNING; 1000000'), mk(6, 'SLASHING; 259904000, PRUNING; 1000000, OTHERS; 100000'), mk(7, 'SLASHING; 7000000, PRUNING; 1000000, OTHERS; 7000000'),
+    mk(8, 'SLASHING; 6000000, PRUNING; 1200000'), mk(9, 'OTHERS; 5100000, SLASHING; 1000000')];
+  return buildUpkeepAnalysis({ upkeepMonthly: M, totalJjg: M.map((m, i) => ({ p: m.p, value: [1813, 66, 4000, 4142, 6686][i] })), flowPanen: [], yield: [], produksi: [], luasPanen: [], costUpkeep: [], marihat: null, blocks: null }); })()`);
+ok(UT.absurd.length === 2 && UT.avgPrev < 2e7 && UT.top.find(t => t.code === 'OTHERS').isNew === false,
+  `tanpa luas: bulan > Rp100 ribu/janjang ditandai tidak wajar (${UT.absurd.length} bulan), "biasanya" Rp${Math.round(UT.avgPrev / 1e6)} juta, OTHERS tidak disebut baru`);
+// R11: rugi yang hilang bila lonjakan biaya disisihkan bukan rugi nyata; R13 tidak bertentangan dengan bulan laporan
+ctx2.dL = { margin: [{ p: { y: 2026, m: 4 }, value: 500 }, { p: { y: 2026, m: 5 }, value: -300 }, { p: { y: 2026, m: 6 }, value: 400 }],
+  profit: [{ p: { y: 2026, m: 5 }, value: -4.4e7 }], upkeepAnalysis: { spikeLoss: (p, v) => (p.m === 5 && v > -1.7e8 ? { name: 'Pembabatan' } : null) } };
+ok(run2(`RECO_CATALOG.find(r => r.code === 'R11').when(dL)`) === null, 'R11 tidak menyebut "margin negatif" bila ruginya akibat lonjakan biaya yang perlu dicek (R25)');
+ctx2.dR13 = { upahRatio: [3, 15, 20, 10].map((v, i) => ({ p: { y: 2026, m: 5 + i }, value: v })) };
+ok(run2(`RECO_CATALOG.find(r => r.code === 'R13').when(dR13)`) === null, 'R13 tidak terpicu bila porsi upah bulan laporan justru turun');
+// KPI tonase dengan banyak janjang tanpa berat tidak diberi panah naik/turun
+const kNw = run2(`OWNER_KPIS.produksi_total(Object.assign({}, D2, { noWeight: { monthly: [{ p: { y: 2026, m: 8 }, share: 64, ton: 250 }] } }))`);
+ok(/Hanya janjang berberat; 64% terjual tanpa berat/.test(kNw.note) && kNw.tone === 'neutral', `KPI tonase: "${kNw.note}"`);
+
+// Blok yang baru muncul disetahunkan sejak bulan pertamanya; blok besar hampir tanpa janjang -> pencapaian Marihat dua versi
+const bpLate = run2(`(function(){ const b = D2.blocks.blocks.find(x => x.name === 'Robert C'), f = b.firstP; b.firstP = D2.blocks.monthly[D2.blocks.monthly.length - 1].p;
+  const P = buildBlockProduction(D2); b.firstP = f; return P.rows.find(r => r.name === 'Robert C'); })()`);
+ok(bpLate.monthsOf === 1, 'blok yang baru muncul di bulan terakhir disetahunkan dari 1 bulan, bukan seluruh periode');
+const mVL = run2(`(function(){ const b = D2.blocks.blocks.find(x => x.name === 'A2'), ha = b.ha, js = b.jjgSum; b.ha = 300; b.jjgSum = 10;
+  const M = buildMarihat(D2); b.ha = ha; b.jjgSum = js; return M; })()`);
+ok(mVL.veryLow && mVL.veryLow.blocks[0].name === 'A2' && mVL.veryLow.achTon > mVL.achTon,
+  `blok 300 ha hampir tanpa janjang: pencapaian ${Math.round(mVL.achTon * 100)}% dengan blok itu, ${Math.round(mVL.veryLow.achTon * 100)}% tanpa blok itu (keduanya dilaporkan)`);
+
 // 11. Produksi per blok (janjang dipanen per blok) + kaitan dengan status pupuk
 const pb = run2(`parseBlocks('F10, 3.39 ha, 2012, -, 342; B8, 1.49 ha, 2017, -; Blok Pasar Bingung, 5 ha, 2009, Gambut, 1084')`);
 ok(pb[0].jjg === 342 && pb[0].soil === null && pb[1].jjg === null && pb[2].soil === 'Gambut' && pb[2].jjg === 1084,
@@ -552,7 +592,7 @@ ok(D2.unsale.jjgTotal === 1200 && /Janjang\\ndipanen/.test(run2(`(function(){ co
   `blok tanpa penjualan kini menghitung janjang dipanen per blok (${D2.unsale.jjgTotal} jjg)`);
 ok(/PRODUKSI PER BLOK/.test(pk2.text) && /Blok prioritas uji daun dan uji tanah/.test(pk2.text) &&
    run2(`MAIN_SUMMARY.m_penyebab(D2).rows.map(r => r.label).join()`).indexOf('Luas blok sesuai standar') >= 0 &&
-   /^1 blok rutin dipanen/.test(run2('dataHeadline("blokprod", D2)')) &&
+   /^1 blok (rutin dipanen|janjang rendah)/.test(run2('dataHeadline("blokprod", D2)')) && run2('dataHeadline("blokprod", D2)').length <= 45 &&
    /mulai dari blok A1/.test(run2('detectRecommendations(D2, P2.topics, detectAnomalies(P2.topics, D2))').find(r => r.code === 'R23').evidence),
   'paket, grafik kesimpulan Penyebab, judul otomatis, dan R23 memakai produksi per blok');
 

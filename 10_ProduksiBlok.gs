@@ -40,7 +40,9 @@ function buildBlockProduction(d) {
   const B = d.blocks;
   if (!B || !B.blocks.some(b => b.jjgSum > 0)) return null;
   const T = DECK_CONFIG.THRESHOLDS;
-  const nMonths = B.monthly.length;
+  // Bulan awal yang belum penuh (ramp) tidak dihitung; tiap blok disetahunkan dari bulan pertama ia muncul
+  const months = B.monthly.map(m => mkey(m.p)).filter(k => k !== d.rampMonth);
+  const nMonths = months.length;
   if (!nMonths) return null;
   const shortData = nMonths < T.MIN_MONTHS_ANNUAL;     // terlalu sedikit bulan: penyebab (hara/rotasi) belum disimpulkan
   const sph = d.sph || DECK_CONFIG.SPH_DEFAULT, sphKnown = !d.sphAssumed && !!d.sph, cls = d.landClass || DECK_CONFIG.DEFAULT_LAND_CLASS;
@@ -48,13 +50,17 @@ function buildBlockProduction(d) {
   const bjr = d.bjrSoldCum || (bjrS ? bjrS.avg : null);
   const priceS = seriesStats(d.hargaJual && d.hargaJual.length ? d.hargaJual : d.revKg);
   const price = priceS ? priceS.avg : null;
-  const months = B.monthly.map(m => mkey(m.p));
   const rows = B.blocks.filter(b => b.ha > 0 && b.jjgSum > 0).map(b => {
-    const jjgHa = ((b.jjgSum / nMonths) * 12) / b.ha;                                  // janjang/ha/tahun
+    const fi = b.firstP ? months.indexOf(mkey(b.firstP)) : 0;
+    const bm = months.slice(Math.max(0, fi));                                        // bulan sejak blok pertama muncul
+    const bSum = bm.reduce((a, k) => a + (b.jjgByMonth[k] || 0), 0);
+    const bHarvest = bm.filter(k => (b.jjgByMonth[k] || 0) > 0).length;
+    const jjgHa = bm.length ? ((bSum / bm.length) * 12) / b.ha : 0;                  // janjang/ha/tahun
     const rjt = sphKnown ? jjgHa / sph : null;
     const std = b.age !== null && b.age >= 3 ? marihatAt(b.age, cls) : null;
     const ach = std ? jjgHa / std.jjgHa : null;
-    const regular = b.jjgMonths >= nMonths * T.BLOCK_REGULAR;
+    const regular = bHarvest >= bm.length * T.BLOCK_REGULAR;
+    const blockShort = bm.length < Math.min(3, nMonths);   // blok baru muncul 1–2 bulan: penyebab belum disimpulkan
     const gapJjg = std ? Math.max(0, std.jjgHa - jjgHa) * b.ha : null;               // janjang/tahun
     const gapRp = gapJjg && bjr && price ? gapJjg * bjr * price : null;
     // tren: rata-rata 3 bulan terakhir vs 3 bulan sebelumnya
@@ -63,9 +69,9 @@ function buildBlockProduction(d) {
     const avg = a => a.reduce((x, y) => x + y, 0) / (a.length || 1);
     const trend = prev3.length === 3 && avg(prev3) ? ((avg(last3) - avg(prev3)) / avg(prev3)) * 100 : null;
     const low = ach !== null && ach < T.BLOCK_LOW_ACH;
-    const cat = ach !== null && ach > T.BLOCK_SUSPECT_ACH ? 'cek' : !low ? (ach !== null ? 'baik' : null) : b.age > T.REPLANT_AGE ? 'tua' : shortData ? 'pantau' : !regular ? 'rotasi' : 'hara';
-    return { name: b.name, ha: b.ha, year: b.year, age: b.age, soil: b.soil, jjgSum: b.jjgSum, harvestMonths: b.jjgMonths, regular,
-             jjgHa, rjt, std, ach, tonHa: bjr ? ((b.jjgSum * bjr) / 1000 / nMonths) * 12 / b.ha : null, gapJjg, gapRp, trend, cat };
+    const cat = ach !== null && ach > T.BLOCK_SUSPECT_ACH ? 'cek' : !low ? (ach !== null ? 'baik' : null) : b.age > T.REPLANT_AGE ? 'tua' : shortData || blockShort ? 'pantau' : !regular ? 'rotasi' : 'hara';
+    return { name: b.name, ha: b.ha, year: b.year, age: b.age, soil: b.soil, jjgSum: bSum, harvestMonths: bHarvest, monthsOf: bm.length, regular,
+             jjgHa, rjt, std, ach, tonHa: bjr && bm.length ? ((bSum * bjr) / 1000 / bm.length) * 12 / b.ha : null, gapJjg, gapRp, trend, cat };
   });
   if (!rows.length) return null;
   const haOf = arr => arr.reduce((a, r) => a + r.ha, 0);
@@ -116,7 +122,7 @@ function describeBlockProduction(d) {
     (P.shortData ? `${P.rows.filter(r => r.cat === 'pantau').length} blok belum disimpulkan penyebabnya, ${P.tuaRows.length} blok lewat umur ekonomis.`
       : `${P.fertRows.length} blok rutin dipanen (indikasi kurang hara), ${P.rotasiRows.length} blok panen tidak teratur, ${P.tuaRows.length} blok lewat umur ekonomis.`));
   L.push(`- Potensi janjang yang belum tercapai: ±${fmt(P.gapJjgTotal, 0)} janjang/tahun${P.gapRpTotal ? ` ≈ ${fmtRp(P.gapRpTotal)}/tahun (BJR kebun ${fmt(P.bjr, 1)} kg × harga rata-rata Rp${fmt(P.price, 0)}/kg; estimasi${P.shortData ? `, disetahunkan dari ${P.nMonths} bulan` : ''})` : ''}.`);
-  L.push(`- Blok prioritas (selisih terbesar dari standar): ${P.priority.slice(0, 6).map(r => `${r.name} ${fmt(r.ha, 1)} ha, umur ${r.age} th, ${fmt(r.jjgHa, 0)} vs standar ${fmt(r.std.jjgHa, 0)} jjg/ha/th (${pct(r.ach)}), dipanen ${r.harvestMonths}/${P.nMonths} bln → ${blockNote(r)}`).join('; ')}.`);
+  L.push(`- Blok prioritas (selisih terbesar dari standar): ${P.priority.slice(0, 6).map(r => `${r.name} ${fmt(r.ha, 1)} ha, umur ${r.age} th, ${fmt(r.jjgHa, 0)} vs standar ${fmt(r.std.jjgHa, 0)} jjg/ha/th (${pct(r.ach)}), dipanen ${r.harvestMonths}/${r.monthsOf} bln → ${blockNote(r)}`).join('; ')}.`);
   if (P.best) L.push(`- Blok terbaik: ${P.best.name} (${fmt(P.best.jjgHa, 0)} jjg/ha/th, ${pct(P.best.ach)} standar) — praktik di blok ini bisa jadi acuan.`);
   L.push(`- Capaian per kelas umur: ${P.byAge.map(g => `${g.name} ${pct(g.ach)} (${fmt(g.ha, 0)} ha)`).join('; ')}.`);
   if (P.bySoil.length > 1 || (P.bySoil[0] && P.bySoil[0].name !== SOIL_UNKNOWN)) L.push(`- Capaian per jenis tanah: ${P.bySoil.map(g => `${g.name} ${pct(g.ach)} (${fmt(g.ha, 0)} ha)`).join('; ')}.`);
@@ -124,7 +130,7 @@ function describeBlockProduction(d) {
   const down = P.rows.filter(r => r.trend !== null && r.trend <= -30 && r.ha >= 2).sort((a, b) => a.trend - b.trend).slice(0, 4);
   if (down.length) L.push(`- Blok dengan janjang 3 bulan terakhir turun tajam (≥30% dari 3 bulan sebelumnya): ${down.map(r => `${r.name} ${fmt(r.trend, 0)}%`).join(', ')}.`);
   if (P.fertRows.length) L.push(`PERLU DICEK: ${P.fertRows.length} blok (${fmt(P.fertHa, 1)} ha) rutin dipanen tetapi janjang/ha di bawah ${pct(DECK_CONFIG.THRESHOLDS.BLOCK_LOW_ACH)} standar umurnya, mis. ${P.fertRows.slice(0, 4).map(r => r.name).join(', ')}; indikasi kurang hara, prioritaskan uji daun dan uji tanah di blok ini.`);
-  if (P.rotasiRows.length) L.push(`PERLU DICEK: ${P.rotasiRows.length} blok berproduktivitas rendah karena jarang dipanen (mis. ${P.rotasiRows.slice(0, 4).map(r => `${r.name} ${r.harvestMonths}/${P.nMonths} bln`).join(', ')}); cek rotasi panen dan akses blok.`);
+  if (P.rotasiRows.length) L.push(`PERLU DICEK: ${P.rotasiRows.length} blok berproduktivitas rendah karena jarang dipanen (mis. ${P.rotasiRows.slice(0, 4).map(r => `${r.name} ${r.harvestMonths}/${r.monthsOf} bln`).join(', ')}); cek rotasi panen dan akses blok.`);
   if (P.suspectRows.length) L.push(`PERLU DICEK DATA: ${P.suspectRows.length} blok mencatat janjang/ha lebih dari ${fmt(DECK_CONFIG.THRESHOLDS.BLOCK_SUSPECT_ACH * 100, 0)}% standar umurnya (mis. ${P.suspectRows.slice(0, 4).map(r => `${r.name} ${fmt(r.ha, 1)} ha, ${fmt(r.ach * 100, 0)}%`).join(', ')}); kemungkinan luas atau nama blok tidak sesuai, sehingga tidak dihitung dalam analisis blok.`);
   if (P.mismatchMonths.length) L.push(`TIDAK KONSISTEN: jumlah janjang per blok berbeda >2% dari total janjang kebun pada ${P.mismatchMonths.join(', ')}.`);
   if (P.missingEntries) L.push(`- ${P.missingEntries} isian blok-bulan belum mencantumkan jumlah janjang (dianggap belum tercatat, bukan nol).`);

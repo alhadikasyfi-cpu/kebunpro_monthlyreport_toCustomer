@@ -67,8 +67,8 @@ const RECO_CATALOG = [
     signals: 'Biaya pemeliharaan (slashing/weeding) kecil atau tidak tercatat; produktivitas pemanen rendah.',
     topics: ['upkeep', 'mandorpanen'],
     when: d => { const U = d.upkeepAnalysis; if (!U || U.months.length < 6) return null;
-      const tot = U.months.reduce((a, m) => a + m.total, 0), g = U.catSeries.find(c => c.key === 'gulma');
-      const gs = g ? g.series.reduce((a, x) => a + x.value, 0) : 0;
+      const tot = U.totalSeries.reduce((a, x) => a + (x.value || 0), 0), g = U.catSeries.find(c => c.key === 'gulma');   // tanpa bulan tidak wajar
+      const gs = g ? g.series.reduce((a, x) => a + (x.value || 0), 0) : 0;
       return tot && gs / tot < 0.05 ? { evidence: `pengendalian gulma hanya ${fmt(gs / tot * 100, 0)}% biaya perawatan ${U.months.length} bulan (${fmtRp(gs)})`, priority: 'sedang' } : null; } },
 
   { code: 'R06', title: 'Perkuat pengendalian hama dan penyakit',
@@ -118,8 +118,11 @@ const RECO_CATALOG = [
     signals: 'Margin per ha negatif atau menurun; biaya per ha melonjak di bulan tertentu.',
     topics: ['margin', 'biayaha'],
     when: d => { const m = seriesStats(d.margin), g = signals(d.margin);
-      return m && (m.negatives.length || g.trend === 'turun')
-        ? { evidence: m.negatives.length ? `margin negatif pada ${m.negatives.map(x => monthLong(x.p)).join(', ')}` : 'margin per ha menurun', priority: 'tinggi' } : null; } },
+      if (!m) return null;
+      // Bulan rugi yang ruginya hilang bila lonjakan biaya (kemungkinan salah input) disisihkan -> bukan rugi nyata (lihat R25)
+      const neg = m.negatives.filter(x => !lossFromUpkeepSpike(d, x.p));
+      return neg.length || g.trend === 'turun'
+        ? { evidence: neg.length ? `margin negatif pada ${neg.map(x => monthLong(x.p)).join(', ')}` : 'margin per ha menurun', priority: neg.length ? 'tinggi' : 'sedang' } : null; } },
 
   { code: 'R12', title: 'Optimalkan harga jual TBS',
     action: 'Bandingkan harga dengan penetapan dinas/PKS lain, jaga mutu TBS agar potongan grading kecil, pertimbangkan kontrak.',
@@ -132,8 +135,10 @@ const RECO_CATALOG = [
     action: 'Tinjau tarif, output per hari kerja, dan komposisi biaya panen/muat/perawatan agar biaya pekerja tetap sebanding dengan harga jual.',
     signals: 'Porsi biaya pekerja terhadap harga jual naik; biaya per kg melonjak di bulan tertentu.',
     topics: ['efisiensi', 'biayakg'],
-    when: d => { const g = signals(d.upahRatio); return g.trend === 'naik'
-      ? { evidence: `porsi upah terhadap harga jual ${g.trend}`, priority: 'sedang' } : null; } },
+    // hanya bila bulan laporan memang di atas bulan lalu / biasanya (tren naik tetapi bulan laporan turun = kontradiktif)
+    when: d => { const g = signals(d.upahRatio), s = seriesStats(d.upahRatio);
+      if (g.trend !== 'naik' || !s || (s.prev && s.last.value < s.prev.value) || s.last.value < s.avg) return null;
+      return { evidence: `porsi upah terhadap harga jual ${monthShort(s.last.p)} ${fmt(s.last.value, 0)}% (rata-rata ${fmt(s.avg, 0)}%), cenderung naik`, priority: 'sedang' }; } },
 
   { code: 'R14', title: 'Lengkapi dan rapikan pencatatan data',
     action: 'Lengkapi data yang kosong dan samakan sumber angka antar-tabel sebelum laporan berikutnya.',

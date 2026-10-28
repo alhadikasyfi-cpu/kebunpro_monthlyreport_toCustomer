@@ -128,8 +128,10 @@ const DECK_CONFIG = {
     COST_MAX_RP_HA_MONTH: 5000000, // biaya pekerja > Rp5 juta/ha dalam sebulan tidak wajar -> salah input, tidak dipakai (laba, biaya/kg)
     UPKEEP_SPIKE_X: 5,          // biaya satu pekerjaan / total bulan > 5× median bulan lain -> lonjakan, cek input
     UPKEEP_SPIKE_MIN_RP: 5000000, //   ...dan selisihnya > Rp5 juta (lonjakan kecil diabaikan)
+    UPKEEP_MAX_RP_JJG: 100000,  // tanpa luas: upkeep > Rp100 ribu per janjang dipanen dalam sebulan tidak wajar
     UPKEEP_MAX_RP_HA_MONTH: 3000000, // upkeep > Rp3 juta/ha dalam satu bulan tidak wajar -> kemungkinan salah input
     BJR_MAX_KG: 35,             // BJR > 35 kg tidak wajar (standar Marihat tertinggi ±35 kg) -> salah catat/sampel timbang terlalu kecil
+    KPI_NOWEIGHT_PCT: 20,       // > 20% janjang bulan itu tanpa berat -> KPI tonase/yield tidak dibandingkan naik/turun (tonase kurang tercatat)
     BJR_MAX_NOWEIGHT_PCT: 50,   // > 50% janjang terjual tanpa berat -> BJR dari sampel terlalu kecil, tidak jadi dasar status pupuk
     MIN_MONTHS_ANNUAL: 6,       // < 6 bulan data: angka per tahun hanya indikatif (musim panen: Jun–Sep ±38–40% panen setahun), penyebab blok rendah belum disimpulkan
     BLOCK_SUSPECT_ACH: 2.0,     // janjang/ha > 200% standar -> kemungkinan salah luas/nama blok, dikeluarkan dari analisis blok

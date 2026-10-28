@@ -99,6 +99,20 @@ function buildMarihat(d) {
   const avgPrice = priceS ? priceS.avg : null;
   const gapTon = Math.max(0, potTonYear - realTonYear);
 
+  // Blok besar yang janjangnya < 10% standar (mis. 91 ha hanya 4 jjg/ha/th) bisa salah luas: tetap dihitung,
+  // tetapi bila > 10% luas, pencapaian juga dihitung tanpa blok itu agar owner melihat kedua angkanya
+  const nm = B.monthly.length || 1;
+  const veryLowBlocks = known.filter(b => b.jjgRec > 0 && b.jjgSum > 0 && b.ha > 0 &&
+    ((b.jjgSum / nm) * 12) / b.ha < DECK_CONFIG.THRESHOLDS.BLOCK_VERY_LOW_ACH * marihatAt(b.age, cls).jjgHa);
+  const lowHa = veryLowBlocks.reduce((s, b) => s + b.ha, 0);
+  let veryLow = null;
+  if (areaFromBlocks && lowHa / area > 0.1 && area - lowHa > 0) {
+    const rest = known.filter(b => veryLowBlocks.indexOf(b) < 0), restHa = rest.reduce((s, b) => s + b.ha, 0);
+    const potEx = restHa ? rest.reduce((s, b) => s + b.ha * marihatAt(b.age, cls).ton, 0) / restHa : null;
+    veryLow = { blocks: veryLowBlocks.map(b => ({ name: b.name, ha: b.ha })), ha: lowHa,
+                achTon: potEx ? (realTonYear / (area - lowHa)) / potEx : null };
+  }
+
   // Rincian per kelas umur
   const byClass = DECK_CONFIG.AGE_CLASSES.map(c => {
     const arr = known.filter(b => b.age >= c.min && b.age <= c.max);
@@ -111,7 +125,7 @@ function buildMarihat(d) {
     cls, area, areaKnown, areaFromBlocks, zeroHa: B.zeroJjgHa || 0, reliable: nMonths >= DECK_CONFIG.THRESHOLDS.MIN_MONTHS_ANNUAL, nMonths, annualized: nMonths < 12, usePanen, soldTonYear,
     pot, potS1, realTonHa, realTonYear, potTonYear, realBjr, realRjt, realJjgHa,
     achTon: realTonHa / pot.ton, achBjr: realBjr ? realBjr / pot.rbt : null, achJjg: realJjgHa ? realJjgHa / pot.jjgHa : null, achRjt: realRjt ? realRjt / pot.rjt : null,
-    gapTon, gapRp: avgPrice ? gapTon * 1000 * avgPrice : null, avgPrice, byClass
+    gapTon, gapRp: avgPrice ? gapTon * 1000 * avgPrice : null, avgPrice, byClass, veryLow
   };
 }
 
@@ -132,6 +146,8 @@ function describeMarihat(d) {
     '- Catatan: potensi Marihat berlaku untuk bibit unggul D×P dengan pemeliharaan standar; bibit tidak unggul menurut pedoman yang sama hanya mencapai sekitar 50% potensi. Yield bulanan di sheet memakai luas panen sebagai pembagi, sedangkan perbandingan ini memakai luas blok.'
   ].filter(Boolean);
   if (M.nMonths < DECK_CONFIG.THRESHOLDS.MIN_MONTHS_ANNUAL) L.push(`CATATAN: realisasi baru ${M.nMonths} bulan penuh; angka per tahun disetahunkan dan dipengaruhi musim panen, jadi masih INDIKATIF. Jangan menyimpulkan pencapaian dari angka ini saja.`);
+  if (M.veryLow && M.veryLow.achTon) L.push(`PERLU DICEK: ${M.veryLow.blocks.length} blok (${fmt(M.veryLow.ha, 1)} ha, ${fmt(M.veryLow.ha / M.area * 100, 0)}% luas) hampir tidak menghasilkan janjang (< ${fmt(DECK_CONFIG.THRESHOLDS.BLOCK_VERY_LOW_ACH * 100, 0)}% standar), mis. ${M.veryLow.blocks.slice(0, 3).map(b => `${b.name} ${fmt(b.ha, 1)} ha`).join(', ')}. ` +
+    `Tanpa blok ini pencapaian ${fmtPct(M.veryLow.achTon * 100, 0)} (dengan blok ini ${fmtPct(M.achTon * 100, 0)}). Pastikan luasnya benar atau blok memang tidak dipanen; sebut kedua angka.`);
   if (M.achTon > 1.2) L.push(`PERLU DICEK: produktivitas ${fmtPct(M.achTon * 100, 0)} dari standar Marihat (di atas potensi); periksa luas blok, tahun tanam, atau kelas lahan yang dipakai.`);
   if (M.achTon < 0.5) L.push(`PERLU DICEK: produktivitas baru ${fmtPct(M.achTon * 100, 0)} dari standar Marihat untuk umur tanamannya (${fmt(M.realTonHa, 1)} vs ${fmt(M.pot.ton, 1)} t/ha/th); potensi tambahan sekitar ${fmt(M.gapTon, 0)} ton per tahun.`);
   return L.join('\n');

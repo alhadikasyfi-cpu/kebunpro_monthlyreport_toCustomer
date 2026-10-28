@@ -293,28 +293,43 @@ function vsTarget(value, target, unitTxt, f) {
  * Kartu KPI Ringkasan Eksekutif: realisasi + PEMBANDING di bawahnya. Pembanding = target owner bila diisi di sheet;
  * bila kosong = bulan sebelumnya (TBS, pendapatan, laba) atau rata-rata periode (yield, BJR). Mengembalikan {name, value, unit, note, tone} atau null bila datanya tidak ada.
  */
+/** Bulan awal yang belum penuh (ramp) tidak ikut rata-rata pembanding KPI. */
+function kpiSeries(d, s) { return (s || []).filter(x => !d.rampMonth || mkey(x.p) !== d.rampMonth); }
+/** Porsi janjang terjual tanpa berat bulan p (%) dan estimasi tonase bila semua ditimbang. */
+function noWeightAt(d, p) {
+  const x = d.noWeight && d.noWeight.monthly.find(m => mkey(m.p) === mkey(p));
+  return x && x.share !== null ? { share: x.share, extraTon: x.ton } : null;
+}
+
 const OWNER_KPIS = {
   produksi_total: d => {
     const s = seriesStats(d.produksi);
     if (!s) return null;
     const f = x => fmt(x, x < 100 ? 1 : 0), v = s.last.value;
     const k = { name: `${d.produksiActual ? 'TBS terjual' : 'Estimasi produksi'} ${monthShort(s.last.p)}`, value: f(v), unit: 'ton' };
+    // Sebagian besar janjang terjual tanpa berat: tonase tercatat terlalu kecil -> jangan dibandingkan naik/turun
+    const nw = d.produksiActual ? noWeightAt(d, s.last.p) : null;
+    if (nw && nw.share > DECK_CONFIG.THRESHOLDS.KPI_NOWEIGHT_PCT) return Object.assign(k, { tone: 'neutral',
+      note: `Hanya janjang berberat; ${fmt(nw.share, 0)}% terjual tanpa berat${nw.extraTon ? ` (±${f(v + nw.extraTon)} ton bila ditimbang)` : ''}` });
     if (d.targets && d.targets.tbs) return Object.assign(k, vsTarget(v, d.targets.tbs, ' ton', f));
     if (s.prev) { const p = kpiDelta(v, s.prev.value); return Object.assign(k, { note: `${arrowPct(p)} vs ${monthShort(s.prev.p)} (${f(s.prev.value)} ton)`, tone: toneOf(p, true) }); }
     return Object.assign(k, { note: 'Belum ada bulan pembanding', tone: 'neutral' });
   },
   yield_rata2: d => {
-    const s = seriesStats(d.yield);
+    const s = seriesStats(kpiSeries(d, d.yield));
     if (!s) return null;
     const f = x => fmt(x, 2), v = s.last.value;
     const k = { name: `Yield ${monthShort(s.last.p)}`, value: f(v), unit: 'ton/ha' };
+    const nw = noWeightAt(d, s.last.p);
+    if (nw && nw.share > DECK_CONFIG.THRESHOLDS.KPI_NOWEIGHT_PCT) return Object.assign(k, { tone: 'neutral',
+      note: `Dari tonase berberat saja; ${fmt(nw.share, 0)}% janjang terjual tanpa berat` });
     if (d.targets && d.targets.yield) return Object.assign(k, vsTarget(v, d.targets.yield, ' ton/ha', f));
     if (s.n > 1) { const p = kpiDelta(v, s.avg); return Object.assign(k, { note: `${arrowPct(p)} vs rata-rata ${s.n} bulan (${f(s.avg)})`, tone: toneOf(p, true) }); }
     return Object.assign(k, { note: 'Belum ada bulan pembanding', tone: 'neutral' });
   },
   bjr_rata2: d => {
     const src = d.bjr && d.bjr.some(x => x.value !== null) ? d.bjr : (d.bjrSoldMonthly || []);
-    const s = seriesStats(src);
+    const s = seriesStats(kpiSeries(d, src));
     if (!s) return null;
     const f = x => fmt(x, 1), v = s.last.value;
     const k = { name: `BJR ${monthShort(s.last.p)}`, value: f(v), unit: 'kg/janjang' };
@@ -1087,7 +1102,9 @@ const MAIN_SUMMARY = {
     const pn = stale ? valAt(d.flowPanen || [], R) || valAt(d.totalJjg || [], R) : null;
     return {
       curLabel: `${monthShort(p)} (${stale ? 'data terakhir' : 'bulan laporan'})`, refLabel: refMonthLabel(p, q),
-      caption: stale ? `${monthLong(R)} belum ada penjualan/tonase tercatat${pn ? ` (dipanen ${fmt(pn, 0)} janjang)` : ''}; grafik memakai ${monthLong(p)}.` : '',
+      caption: stale ? `${monthLong(R)} belum ada penjualan/tonase tercatat${pn ? ` (dipanen ${fmt(pn, 0)} janjang)` : ''}; grafik memakai ${monthLong(p)}.`
+        : [valAt(d.revenueTotal || [], p) === null ? `Pendapatan ${monthLong(p)} belum tercatat, sehingga laba bulan ini belum dapat dihitung.` : '',
+           (d.costOutliers || []).some(x => mkey(x.p) === mkey(p)) ? `Biaya pekerja ${monthLong(p)} tidak wajar (kemungkinan salah input) dan tidak dipakai.` : ''].filter(Boolean).join(' '),
       rows: [
         row(d.produksiActual === false ? 'Estimasi produksi' : 'TBS terjual', 'ton', m => at(d.produksi, m), v => fmt(v, Math.abs(v) < 100 ? 1 : 0), true),
         row('Pendapatan', 'Rp juta', jt(d.revenueTotal), f1, true),
@@ -1226,7 +1243,8 @@ function dataHeadline(id, d) {
     const avg = fmtRpShort(Math.abs(p.avg));
     if (p.avg < 0) return [`Rata-rata rugi ${avg} per bulan`, 'Kebun merugi setelah biaya pekerja'];
     if (p.n === 1) return [`Laba kotor ${monthLong(p.last.p)} ${avg}`];
-    if (p.negatives.length) return [`Laba ${avg} per bulan, rugi pada ${monthLong(p.negatives[0].p)}`, `Laba ${avg} per bulan, sempat rugi`];
+    const neg = p.negatives.filter(x => !lossFromUpkeepSpike(d, x.p));   // rugi karena lonjakan biaya (cek input) tidak disebut rugi
+    if (neg.length) return [`Laba ${avg}/bulan, rugi ${monthShort(neg[0].p)}`, `Laba ${avg} per bulan, sempat rugi`];
     return [`Laba kotor rata-rata ${avg} per bulan`];
   };
   const H = {
@@ -1287,7 +1305,8 @@ function dataHeadline(id, d) {
   };
   try {
     const list = H[id] ? H[id]() : null;
-    return (list || []).find(h => h && titleFits(h)) || null;
+    // judul = satu baris dan ≤ 45 karakter (aturan gaya); kandidat lebih panjang dilewati
+    return (list || []).find(h => h && h.length <= AI_LIMITS.HEADLINE_MAX_CHARS && titleFits(h)) || null;
   } catch (e) { return null; }
 }
 

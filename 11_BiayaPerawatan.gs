@@ -72,13 +72,20 @@ const UPKEEP_RULES = [
   [/ROAD|BRIDGE|DRAIN|RAMP|JALAN|PARIT|STONE|CULVERT|TPH|GRAVEL|SAND/, 'infra'], [/DRIVER|OPERATOR|VEHICLE|EXCAVATOR|CRANE|WORKSHOP|TRACTOR/, 'alat']
 ];
 
+/** Kode berbeda untuk pekerjaan yang sama (salah ketik / varian) -> satu kode, agar tidak terpecah di tabel & lonjakan. */
+const UPKEEP_ALIASES = { PRUNINIG: 'PRUNING', ROAD_MAINTENNANCE: 'ROAD_MAINTENANCE', SPRAYING_TOTAL: 'SPRAYING',
+  FFB_COLLECTION_PASSING: 'FFB_COLLECTION', MECHANIC_HELPER: 'MECHANIC_ASSISTANT', POISON_WEEDS: 'WEED_SPRAYING' };
+/** Pekerjaan aplikasi pupuk (bukti frekuensi pemupukan); bongkar/angkut pupuk tidak dihitung sebagai aplikasi. */
+const UPKEEP_FERT_APPLY = /^(FERTILIZING|SPREADING_EFB|BOILER_ASH_SPREADING)$/;
+
 function upkeepCategory(key) { return UPKEEP_CATEGORIES.find(c => c.key === key) || UPKEEP_CATEGORIES[UPKEEP_CATEGORIES.length - 1]; }
 
 /** "PRUNINIG" -> {code: 'PRUNING', name: 'Penunasan', cat: 'tanaman'}; kode tak dikenal -> nama dari kode itu sendiri. */
 function upkeepActivity(raw) {
-  const code = String(raw || '').trim().toUpperCase().replace(/[\s-]+/g, '_');
+  const raw0 = String(raw || '').trim().toUpperCase().replace(/[\s-]+/g, '_');
+  const code = UPKEEP_ALIASES[raw0] || raw0;
   const known = UPKEEP_ACTIVITIES[code];
-  if (known) return { code: code === 'PRUNINIG' ? 'PRUNING' : code, name: known[0], cat: known[1] };
+  if (known) return { code, name: known[0], cat: known[1] };
   const rule = UPKEEP_RULES.find(r => r[0].test(code));
   const name = code.toLowerCase().split('_').filter(Boolean).join(' ');
   return { code, name: name ? name.charAt(0).toUpperCase() + name.slice(1) : 'Tanpa nama', cat: rule ? rule[1] : 'lain' };
@@ -152,9 +159,11 @@ function buildUpkeepAnalysis(d) {
   const area = (d.marihat && d.marihat.area) || (d.blocks && d.blocks.totalHa) || upkeepMedian(lp) || null;
   // Bulan dengan upkeep per ha tidak masuk akal (mis. Rp434 juta/ha sebulan) = hampir pasti salah input:
   // tetap dilaporkan, tetapi tidak dipakai sebagai pembanding, rata-rata, atau grafik
-  const absurd = area ? months.filter(m => m.total / area > T.UPKEEP_MAX_RP_HA_MONTH) : [];
+  // Tanpa luas: pakai biaya per janjang dipanen (upkeep > Rp100 ribu per janjang sebulan = lebih mahal dari nilai janjangnya)
+  const jjgOf = m => valAt(d.flowPanen || [], m.p) || valAt(d.totalJjg || [], m.p);
+  const absurd = months.filter(m => area ? m.total / area > T.UPKEEP_MAX_RP_HA_MONTH
+    : (jjgOf(m) ? m.total / jjgOf(m) > T.UPKEEP_MAX_RP_JJG : false));
   const isAbsurd = m => absurd.indexOf(m) >= 0;
-  const before = months.filter(x => (!cur || key(x.p) !== key(cur.p)) && !isAbsurd(x));
 
   // Lonjakan per pekerjaan: biaya bulan itu > SPIKE_X × median bulan lain (minimal 3 bulan pembanding) dan > Rp5 juta
   const spikes = [];
@@ -169,6 +178,13 @@ function buildUpkeepAnalysis(d) {
     });
   });
   spikes.sort((a, b) => (b.cost - b.median) - (a.cost - a.median));
+  // Bulan yang sebagian besar biayanya berasal dari lonjakan (kemungkinan salah input) tidak dipakai sebagai "biasanya"
+  const spikeRp = m => spikes.filter(s => key(s.p) === key(m.p)).reduce((a, s) => a + (s.cost - s.median), 0);
+  const tainted = m => isAbsurd(m) || (m.total && spikeRp(m) / m.total > 0.5);
+  const before = months.filter(x => (!cur || key(x.p) !== key(cur.p)) && !tainted(x));
+  // Biaya kurang dari Rp1.000 untuk satu pekerjaan sebulan hampir pasti jumlah/satuan, bukan rupiah
+  const tinyItems = [];
+  months.forEach(m => m.items.forEach(it => { if (it.cost > 0 && it.cost < 1000) tinyItems.push({ p: m.p, name: it.name, cost: it.cost }); }));
   // Lonjakan total bulanan & biaya per ha per bulan yang tidak masuk akal
   const totals = months.map(m => m.total);
   const monthSpikes = months.filter(m => {
@@ -181,8 +197,10 @@ function buildUpkeepAnalysis(d) {
   // Konsistensi: jumlah rincian vs total_cost; total upkeep vs kolom upkeep_cost_idr tabel biaya pekerja
   const near = (a, b) => Math.abs(a - b) <= Math.max(1000, Math.abs(b) * 0.01);
   const sumMismatch = months.filter(m => m.items.length && !near(m.itemSum, m.total));
-  const crossMismatch = months.map(m => ({ p: m.p, upkeep: m.total, biaya: valAt(d.costUpkeep || [], m.p) }))
-    .filter(x => x.biaya !== null && x.biaya !== undefined && !near(x.upkeep, x.biaya));
+  // Pakai angka mentah tabel biaya (sebelum bulan tidak wajar disisihkan); urut dari selisih terbesar
+  const crossMismatch = months.map(m => ({ p: m.p, upkeep: m.total, biaya: valAt(d.costUpkeepRaw || d.costUpkeep || [], m.p) }))
+    .filter(x => x.biaya !== null && x.biaya !== undefined && !near(x.upkeep, x.biaya))
+    .sort((a, b) => Math.abs(b.upkeep - b.biaya) - Math.abs(a.upkeep - a.biaya));
 
   // Seri per kategori (untuk grafik bertumpuk) dan total
   const catSeries = UPKEEP_CATEGORIES.map(c => ({ key: c.key, name: c.name, color: c.color,
@@ -196,15 +214,19 @@ function buildUpkeepAnalysis(d) {
   const histOf = code => before.map(m => { const it = m.items.find(x => x.code === code); return it ? it.cost : 0; });
   const top = cur ? cur.items.slice(0, 8).map(it => {
     const pv = prev ? (prev.items.find(x => x.code === it.code) || { cost: 0 }).cost : null;
-    const avg = before.length ? upkeepMedian(histOf(it.code)) : null;   // "biasanya" = median (tidak terseret lonjakan)
-    return Object.assign({}, it, { prev: pv, avg, share: cur.total ? (it.cost / cur.total) * 100 : 0,
+    const hist = histOf(it.code);
+    const avg = before.length ? upkeepMedian(hist) : null;   // "biasanya" = median (tidak terseret lonjakan)
+    const isNew = !pv && !months.some(m => key(m.p) !== key(cur.p) && m.items.some(x => x.code === it.code && x.cost > 0));
+    return Object.assign({}, it, { prev: pv, avg, isNew, share: cur.total ? (it.cost / cur.total) * 100 : 0,
       spike: spikes.some(s => key(s.p) === key(cur.p) && s.code === it.code) });
   }) : [];
   const avgPrev = before.length ? upkeepMedian(before.map(m => m.total)) : null;   // median bulan sebelumnya
 
   // Pemupukan tercatat: bulan dengan biaya pemupukan, terakhir kapan, Rp/ha setahun (dari bulan yang tercatat)
-  const fertMonths = months.filter(m => m.items.some(it => it.cat === 'pupuk' && it.cost > 0));
-  const fertRp = fertMonths.reduce((a, m) => a + m.items.filter(it => it.cat === 'pupuk').reduce((x, it) => x + it.cost, 0), 0);
+  // hanya pekerjaan aplikasi pupuk; biaya yang ditandai lonjakan memakai nilai biasanya (median) agar Rp/ha tidak menggelembung
+  const fertMonths = months.filter(m => !isAbsurd(m) && m.items.some(it => UPKEEP_FERT_APPLY.test(it.code) && it.cost > 0));
+  const fertCost = (m, it) => { const s = spikes.find(x => key(x.p) === key(m.p) && x.code === it.code); return s ? s.median : it.cost; };
+  const fertRp = fertMonths.reduce((a, m) => a + m.items.filter(it => UPKEEP_FERT_APPLY.test(it.code)).reduce((x, it) => x + fertCost(m, it), 0), 0);
   const lastFert = fertMonths.length ? fertMonths[fertMonths.length - 1].p : null;
   const monthsSince = lastFert ? (repP.y * 12 + repP.m) - (lastFert.y * 12 + lastFert.m) : null;
   const fert = { months: fertMonths.length, of: months.length, rp: fertRp, last: lastFert, monthsSince,
@@ -212,7 +234,7 @@ function buildUpkeepAnalysis(d) {
     perYear: months.length ? (fertMonths.length / months.length) * 12 : null };
 
   return { months, repP, cur, prev, avgPrev, before, area, absurd, curAbsurd: !!(cur && isAbsurd(cur)), prevAbsurd: !!(prev && isAbsurd(prev)), catSeries, totalSeries, perHa, perTon, top, spikes, monthSpikes,
-           sumMismatch, crossMismatch, fert, beforeMain: M.filter(x => (x.p.y * 12 + x.p.m) < (months[0].p.y * 12 + months[0].p.m)).length,
+           sumMismatch, crossMismatch, fert, tinyItems, spikeLoss: (p, loss) => { const m = months.find(x => key(x.p) === key(p)); return m && loss < 0 && spikeRp(m) >= -loss ? spikes.find(s => key(s.p) === key(p)) : null; }, beforeMain: M.filter(x => (x.p.y * 12 + x.p.m) < (months[0].p.y * 12 + months[0].p.m)).length,
            extraBeforeMain: lastMain ? months.filter(m => !valAt(d.totalJjg || [], m.p) && !valAt(d.flowPanen || [], m.p)).length : 0 };
 }
 
@@ -246,9 +268,16 @@ function describeUpkeepMonthly(d) {
   U.spikes.slice(0, 4).forEach(s => L.push(`PERLU DICEK: biaya ${s.name} ${monthLong(s.p)} ${rp(s.cost)}, ${fmt(s.ratio, 0)}× median bulan lain (${rp(s.median)}); kemungkinan salah input jumlah atau satuan, atau pekerjaan besar sekali jalan.`));
   U.monthSpikes.filter(m => !U.spikes.some(s => mkey(s.p) === mkey(m.p)) || (m.perHa && m.perHa > DECK_CONFIG.THRESHOLDS.UPKEEP_MAX_RP_HA_MONTH)).slice(0, 2).forEach(m => L.push(`PERLU DICEK: total upkeep ${monthLong(m.p)} ${rp(m.total)}` +
     `${m.perHa ? ` (${rp(m.perHa)}/ha, tidak wajar untuk satu bulan)` : ''}${m.median ? `; median bulan lain ${rp(m.median)}` : ''}; kemungkinan salah input.`));
+  if (U.tinyItems.length) L.push(`PERLU DICEK: biaya ${U.tinyItems.slice(0, 3).map(x => `${x.name} ${monthShort(x.p)} Rp${fmt(x.cost, 0)}`).join(', ')} terlalu kecil untuk satu pekerjaan sebulan; kemungkinan yang diisi jumlah/satuan, bukan rupiah.`);
   if (U.sumMismatch.length) L.push(`TIDAK KONSISTEN: jumlah rincian pekerjaan ≠ total_cost pada ${U.sumMismatch.map(m => `${m.label} (${rp(m.itemSum)} vs ${rp(m.total)})`).slice(0, 3).join(', ')}.`);
   if (U.crossMismatch.length) L.push(`TIDAK KONSISTEN: total upkeep berbeda dengan biaya perawatan di tabel biaya pekerja pada ${U.crossMismatch.map(x => `${monthShort(x.p)} (${rp(x.upkeep)} vs ${rp(x.biaya)})`).slice(0, 3).join(', ')}; samakan sumber pencatatan.`);
   return L.join('\n');
+}
+
+/** Lonjakan upkeep yang menjelaskan kerugian bulan p (rugi hilang bila kelebihan lonjakan disisihkan) -> spike | null. */
+function lossFromUpkeepSpike(d, p) {
+  const U = d.upkeepAnalysis, v = valAt(d.profit || [], p);
+  return U && v !== null && v !== undefined ? U.spikeLoss(p, v) : null;
 }
 
 /** Baris tabel lampiran: pekerjaan bulan laporan vs bulan lalu & rata-rata. */
@@ -257,7 +286,7 @@ function upkeepTableRows(d) {
   if (!U || !U.top.length) return null;
   const jt = v => (v === null || v === undefined ? '-' : fmt(v / 1e6, v && v < 1e6 ? 2 : 1));
   return U.top.map(t => [t.name, upkeepCategory(t.cat).name, jt(t.cost), U.prev ? jt(t.prev) : '-', jt(t.avg),
-    t.spike ? 'lonjakan, cek input' : t.avg && t.cost > t.avg * 2 ? 'naik > 2× biasanya' : t.avg === 0 ? 'baru bulan ini' : '']);
+    t.spike ? 'lonjakan, cek input' : t.isNew ? 'baru bulan ini' : t.avg && t.cost > t.avg * 2 ? 'naik > 2× biasanya' : '']);
 }
 
 /** Item upkeep bulan laporan untuk kode lama (rekomendasi, status pupuk): [{name, value, pct}]. */
