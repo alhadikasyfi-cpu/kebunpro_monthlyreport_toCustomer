@@ -75,11 +75,22 @@ function buildBlockProduction(d) {
     const avg = a => a.reduce((x, y) => x + y, 0) / (a.length || 1);
     const trend = prev3.length === 3 && avg(prev3) ? ((avg(last3) - avg(prev3)) / avg(prev3)) * 100 : null;
     const low = ach !== null && ach < T.BLOCK_LOW_ACH;
+    // Tonase per blok (bila dicatat, dari penjualan yang sudah diinput): ton/ha/tahun dan BJR blok
+    const tSum = bm.reduce((a, k) => a + ((b.tonByMonth || {})[k] || 0), 0);
+    const tonHaRec = b.tonRec && bm.length ? ((tSum / bm.length) * 12) / b.ha : null;
+    const bjrRec = b.tonRec && bSum ? (tSum * 1000) / bSum : null;
     const cat = ach !== null && ach > T.BLOCK_SUSPECT_ACH ? 'cek' : !low ? (ach !== null ? 'baik' : null) : b.age > T.REPLANT_AGE ? 'tua' : shortData || blockShort ? 'pantau' : !regular ? 'rotasi' : 'hara';
     return { name: b.name, ha: b.ha, year: b.year, age: b.age, soil: b.soil, jjgSum: bSum, harvestMonths: bHarvest, monthsOf: bm.length, regular,
-             jjgHa, rjt, std, ach, tonHa: bjr && bm.length ? ((bSum * bjr) / 1000 / bm.length) * 12 / b.ha : null, gapJjg, gapRp, trend, cat };
+             jjgHa, rjt, std, ach, tonHa: bjr && bm.length ? ((bSum * bjr) / 1000 / bm.length) * 12 / b.ha : null, gapJjg, gapRp, trend, cat,
+             tonSum: tSum, tonHaRec, bjrRec, achTon: tonHaRec !== null && std ? tonHaRec / std.ton : null };
   });
   if (!rows.length) return null;
+  // Tonase per blok hanya dipakai bila lengkap: BJR gabungan blok (ton ÷ janjang dipanen) ≥ 85% BJR kebun. Bila jauh lebih
+  // kecil, sebagian penjualan belum diinput sehingga ton/ha dan BJR per blok akan tampak terlalu rendah -> tidak ditampilkan.
+  const tAll = rows.reduce((a, r) => a + (r.tonSum || 0), 0), jAll = rows.reduce((a, r) => a + r.jjgSum, 0);
+  const tonCover = { blockBjr: tAll && jAll ? (tAll * 1000) / jAll : null };
+  tonCover.ratio = tonCover.blockBjr && bjr ? tonCover.blockBjr / bjr : null;
+  tonCover.ok = !!(tonCover.ratio && tonCover.ratio >= 0.85);
   const haOf = arr => arr.reduce((a, r) => a + r.ha, 0);
   const suspectRows = rows.filter(r => r.cat === 'cek');
   const rated = rows.filter(r => r.ach !== null && r.cat !== 'cek'), ratedHa = haOf(rated);
@@ -106,7 +117,7 @@ function buildBlockProduction(d) {
   }).map(m => m.label);
   const missingEntries = (d.blocksRaw || []).reduce((a, row) => a + parseBlocks(row.value).filter(b => b.jjg === null).length, 0);
   return {
-    rows, nMonths, shortData, sph, sphKnown, cls, bjr, price,
+    rows, nMonths, shortData, sph, sphKnown, cls, bjr, price, hasTon: tonCover.ok, tonCover,
     ratedHa, lowHa: haOf(lowRows), lowPct: ratedHa ? (haOf(lowRows) / ratedHa) * 100 : 0,
     fertRows, fertHa: haOf(fertRows), fertPct: ratedHa ? (haOf(fertRows) / ratedHa) * 100 : 0,
     rotasiRows: rated.filter(r => r.cat === 'rotasi'), tuaRows: rated.filter(r => r.cat === 'tua'),
@@ -140,7 +151,41 @@ function describeBlockProduction(d) {
   if (P.suspectRows.length) L.push(`PERLU DICEK DATA: ${P.suspectRows.length} blok mencatat janjang/ha lebih dari ${fmt(DECK_CONFIG.THRESHOLDS.BLOCK_SUSPECT_ACH * 100, 0)}% standar umurnya (mis. ${P.suspectRows.slice(0, 4).map(r => `${r.name} ${fmt(r.ha, 1)} ha, ${fmt(r.ach * 100, 0)}%`).join(', ')}); kemungkinan luas atau nama blok tidak sesuai, sehingga tidak dihitung dalam analisis blok.`);
   if (P.mismatchMonths.length) L.push(`TIDAK KONSISTEN: jumlah janjang per blok berbeda >2% dari total janjang kebun pada ${P.mismatchMonths.join(', ')}.`);
   if (P.missingEntries) L.push(`- ${P.missingEntries} isian blok-bulan belum mencantumkan jumlah janjang (dianggap belum tercatat, bukan nol).`);
+  if (P.hasTon) L.push(`- Tonase per blok tercatat lengkap (BJR gabungan blok ${fmt(P.tonCover.blockBjr, 1)} kg vs BJR kebun ${fmt(P.bjr, 1)} kg): ton/ha/tahun dan BJR per blok ditampilkan di lampiran.`);
+  else if (P.tonCover.blockBjr) L.push(`- Tonase per blok belum lengkap (BJR gabungan blok ${fmt(P.tonCover.blockBjr, 1)} kg vs BJR kebun ${fmt(P.bjr, 1)} kg) karena sebagian penjualan belum diinput; ton/ha per blok belum dipakai.`);
   return L.join('\n');
+}
+
+/** Blok yang ditampilkan di slide utama: blok prioritas (selisih terbesar), atau blok dengan capaian terendah bila semua di atas standar. */
+function blockFocusRows(P) {
+  return (P.priority.length ? P.priority : P.rows.filter(r => r.ach !== null && r.cat !== 'cek').sort((a, b) => a.ach - b.ach)).slice(0, 6);
+}
+
+/** Catatan tindak lanjut singkat satu blok (kolom tabel). */
+function blockShortNote(r) {
+  const T = DECK_CONFIG.THRESHOLDS;
+  if (r.ach === null) return 'Umur belum tercatat';
+  return (r.cat === 'baik' && r.ach < 1 ? 'Di bawah standar' : BLOK_CATATAN_SINGKAT[r.cat] || '-') +
+    (r.ach < T.BLOCK_VERY_LOW_ACH && r.cat !== 'cek' ? '; cek luas' : '');
+}
+
+/**
+ * Tabel SEMUA blok untuk lampiran (berlanjut ke beberapa slide bila panjang): blok dengan selisih janjang terbesar dari
+ * standar di atas, lalu blok lain dari capaian terendah. Ton/ha dan BJR blok tampil bila tonase per blok dicatat.
+ * -> {headers, rows, o} | null
+ */
+function blockAllTable(d) {
+  const P = d.blockProd;
+  if (!P) return null;
+  const list = P.rows.slice().sort((a, b) => ((b.gapJjg || 0) - (a.gapJjg || 0)) || ((a.ach === null ? 9 : a.ach) - (b.ach === null ? 9 : b.ach)));
+  const ton = P.hasTon, pct = v => (v === null || v === undefined ? '-' : `${fmt(v * 100, 0)}%`);
+  const headers = ['Blok', 'Umur\nth', 'Luas\nha', 'Janjang\n/ha/th', 'Capaian\njanjang'].concat(ton ? ['Ton\n/ha/th', 'BJR\nkg'] : []).concat(['Tindak lanjut']);
+  const rows = list.map(r => [r.name, r.age === null ? '-' : String(r.age), fmt(r.ha, 1), fmt(r.jjgHa, 0), pct(r.ach)]
+    .concat(ton ? [r.tonHaRec === null ? '-' : fmt(r.tonHaRec, 1), r.bjrRec === null ? '-' : fmt(r.bjrRec, 1)] : []).concat([blockShortNote(r)]));
+  const achCol = 4, low = DECK_CONFIG.THRESHOLDS.BLOCK_LOW_ACH * 100;
+  return { headers, rows, o: { colWidths: ton ? [1.5, 0.8, 0.9, 1.1, 1.1, 1.0, 0.9, 2.4] : [1.6, 0.9, 1.0, 1.3, 1.3, 2.9], rowHeight: 21, headerHeight: 34,
+    numCols: ton ? [1, 2, 3, 4, 5, 6] : [1, 2, 3, 4],
+    cellColor: (ri, c, txt) => (c === achCol && parseNum(txt) !== null && parseNum(txt) < low ? DECK_CONFIG.COLOR.DANGER : null) } };
 }
 
 /** Baris tabel blok prioritas untuk slide lampiran. */

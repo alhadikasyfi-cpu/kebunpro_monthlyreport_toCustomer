@@ -115,7 +115,6 @@ const DECK_CONFIG = {
     NEW_BLOCK_SHARE: 0.15,      // blok baru > 15% luas daftar blok bulan itu -> "lonjakan blok baru"
     MUAT_VS_PANEN: 0.7,         // JJG dimuat < 70% JJG dipanen -> risiko restan (dari tabel mandor)
     FLOW_LOSS_PCT: 5,           // janjang belum tercatat antar-tahap > 5% -> alur panen ke muat tidak tercatat
-    RKH_MIN_COVERAGE: 0.8,      // RKH (Rencana Kerja Harian) terisi < 80% bulan data -> temuan + rekomendasi R26
     RKH_MIN_DONE: 0.8,          // RKH selesai < 80% dari yang dibuat (bulan laporan) -> temuan + R26
     FLOW_EXCESS_PCT: 2,         // tahap berikut > tahap sebelumnya lebih dari 2% (kumulatif) -> pencatatan tidak konsisten
     REPLANT_AGE: 25,            // umur > 25 tahun -> kandidat peremajaan
@@ -308,7 +307,7 @@ const DECK_CONFIG = {
     REV_HA: ['revenue_per_ha', 'revenue_per_ha_idr'],
     COST_HA: ['total_cost_per_ha', 'cost_per_ha_idr'],
     UPKEEP_LABEL: ['Upkeep Cost', 'Upkeep Cost 12 bulan juga'],
-    UPKEEP_HEADER: ['activity_group', 'activity_group (name; cost)'],
+    UPKEEP_HEADER: ['activity_group', 'activity_group (name; cost)', 'activity_group (name; cost; block_name)'],
     RAWAT_LABEL: ['Top Mandor Rawat'],
     PANEN_LABEL: ['Top Mandor Panen'],
     MUAT_LABEL: ['Top Mandor Muat'],

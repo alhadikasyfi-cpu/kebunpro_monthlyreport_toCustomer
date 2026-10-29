@@ -101,7 +101,7 @@ const RECO_CATALOG = [
       const st = held && F.steps.find(x => x.from === 'Dipanen' && x.loss);
       if (st) return { evidence: `${fmt(st.gap, 0)} jjg (${fmt(st.pct, 0)}%) dipanen belum tercatat dimuat${st.rp ? ` ≈ ${fmtRp(st.rp)}` : ''}; bila data muat sudah lengkap, berarti kapasitas muat kurang`, priority: 'sedang' };
       // hanya temuan restan bertanda tertahan (muat < panen), bukan "dimuat melebihi dipanen"
-      const a = (ctx.detected || []).find(x => /restan/.test(x.text) && !/melebihi|tidak tercatat menjual/.test(x.text)); return a ? { evidence: a.text.replace(/^PERLU DICEK:\s*/, ''), priority: 'sedang' } : null; } },
+      const a = (ctx.detected || []).find(x => /restan/.test(x.text) && !/melebihi|penjualannya belum tercatat/.test(x.text)); return a ? { evidence: a.text.replace(/^PERLU DICEK:\s*/, ''), priority: 'sedang' } : null; } },
 
   { code: 'R10', title: 'Samakan produktivitas antar-pemanen',
     action: 'Tetapkan target JJG/hari berbasis capaian terbaik, tinjau pembagian ancak, dan beri insentif premi.',
@@ -142,11 +142,10 @@ const RECO_CATALOG = [
 
   { code: 'R14', title: 'Lengkapi dan rapikan pencatatan data',
     action: 'Lengkapi data yang kosong dan samakan sumber angka antar-tabel; tetapkan admin yang menginput data setiap hari, bukan menumpuk di akhir bulan.',
-    signals: 'Ada data kosong, tabel tidak konsisten, atau anomali yang belum terjelaskan.',
+    signals: 'Tabel tidak konsisten atau anomali yang belum terjelaskan (data yang memang tidak dipakai kebun tidak dihitung).',
     topics: ['anomali'],
-    when: d => { const miss = checkDataCompleteness(d);
-      const inc = describeRelations(d).split('\n').filter(l => /ANOMALI DATA|TIDAK KONSISTEN/.test(l)).length;
-      return miss.length || inc ? { evidence: [miss.length ? `data kosong: ${miss.slice(0, 4).join(', ')}` : '', inc ? `${inc} ketidaksesuaian antar-tabel` : ''].filter(Boolean).join('; '), priority: 'sedang' } : null; } },
+    when: d => { const inc = describeRelations(d).split('\n').filter(l => /ANOMALI DATA|TIDAK KONSISTEN/.test(l)).length;
+      return inc ? { evidence: `${inc} ketidaksesuaian antar-tabel`, priority: 'sedang' } : null; } },
 
   { code: 'R15', title: 'Perbaiki jalan dan jembatan panen',
     action: 'Prioritaskan perbaikan akses di blok dengan angkutan terhambat untuk mencegah restan.',
@@ -189,12 +188,12 @@ const RECO_CATALOG = [
     when: d => { const N = d.noWeight; return N && N.share > DECK_CONFIG.THRESHOLDS.NOWEIGHT_PCT
       ? { evidence: `data penjualan ${fmt(N.share, 0)}% janjang belum diinput (${fmt(N.nwSum, 0)} jjg${N.rpSum ? ` ≈ ${fmtRp(N.rpSum)}` : ''})`, priority: N.share > 20 ? 'tinggi' : 'sedang' } : null; } },
 
-  { code: 'R21', title: 'Telusuri blok yang tidak tercatat menjual',
-    action: 'Cek per blok apakah janjang dipanen, tertinggal di TPH, atau dijual tanpa dicatat blok asalnya; tetapkan pengawasan blok tersebut.',
-    signals: 'Blok yang sama berulang kali dipanen tetapi tidak tercatat menjual.',
+  { code: 'R21', title: 'Input penjualan per blok di aplikasi',
+    action: 'Catat blok asal pada setiap trip penjualan di aplikasi, sehingga hasil dan pendapatan setiap blok terbaca; admin mengecek tiap minggu blok yang dipanen tetapi penjualannya belum tercatat.',
+    signals: 'Blok yang sama berulang kali dipanen tetapi penjualannya belum diinput ke aplikasi.',
     topics: ['blokunsale', 'alurjjg'],
     when: d => { const U = d.unsale; return U && U.chronic.length
-      ? { evidence: `${U.chronic.length} blok${U.chronic.some(b => b.ha) ? ` (${fmt(U.chronic.reduce((a, b) => a + b.ha, 0), 1)} ha)` : ''} tanpa penjualan ≥ ${DECK_CONFIG.THRESHOLDS.UNSALE_MONTHS} bulan, mis. ${U.chronic.slice(0, 3).map(b => b.name).join(', ')}`, priority: 'tinggi' } : null; } },
+      ? { evidence: `${U.chronic.length} blok${U.chronic.some(b => b.ha) ? ` (${fmt(U.chronic.reduce((a, b) => a + b.ha, 0), 1)} ha)` : ''} penjualannya belum tercatat ≥ ${DECK_CONFIG.THRESHOLDS.UNSALE_MONTHS} bulan, mis. ${U.chronic.slice(0, 3).map(b => b.name).join(', ')}`, priority: 'tinggi' } : null; } },
 
   { code: 'R22', title: 'Lakukan uji tanah per jenis tanah',
     action: 'Ambil contoh tanah per blok atau kelompok blok sejenis, analisis pH, C-organik, N, P, K, Mg, dan KTK, lalu catat jenis tanah di data blok KebunPRO.',
@@ -235,16 +234,14 @@ const RECO_CATALOG = [
       if (x) return { evidence: `total upkeep ${monthShort(x.p)} ${fmtRp(x.upkeep)} vs biaya perawatan di tabel biaya ${fmtRp(x.biaya)}`, priority: 'sedang' };
       return null; } },
 
-  { code: 'R26', title: 'Gunakan RKH untuk memantau rotasi panen',
-    action: 'Isi Rencana Kerja Harian (RKH) di KebunPRO setiap hari: ancak/blok yang akan dipanen dan dirawat. Bandingkan dengan panen aktual agar rotasi 7–10 hari per ancak terpantau dan blok yang terlewat terlihat.',
-    signals: 'RKH belum diisi atau jarang diisi, sehingga rencana kerja belum bisa dibandingkan dengan rotasi panen di lapangan; produksi atau janjang per blok naik-turun.',
+  { code: 'R26', title: 'Tuntaskan RKH untuk menjaga rotasi panen',
+    action: 'Tuntaskan RKH yang dibuat (tandai selesai di aplikasi) dan bandingkan dengan panen aktual, agar rotasi 7–10 hari per ancak terpantau dan ancak yang terlewat langsung terlihat.',
+    signals: 'RKH dipakai di aplikasi tetapi banyak yang belum selesai, sehingga sebagian ancak kemungkinan terlewat dan rotasi panen memanjang.',
     topics: ['blokprod', 'jjg', 'produksi'],
-    when: d => { const R = d.rkh, T = DECK_CONFIG.THRESHOLDS;
-      const rot = d.blockProd && d.blockProd.rotasiRows && d.blockProd.rotasiRows.length ? `; ${d.blockProd.rotasiRows.length} blok jarang dipanen` : '';
-      if (!R || !R.filled) return { evidence: `RKH belum diisi, rencana kerja belum bisa dibandingkan dengan rotasi panen aktual${rot}`, priority: 'tinggi' };
-      if (R.coverage < T.RKH_MIN_COVERAGE || !R.cur) return { evidence: `RKH baru diisi ${R.filledMonths.length} dari ${R.months} bulan data${R.cur ? '' : ', bulan laporan belum diisi'}${rot}`, priority: 'tinggi' };
-      if (R.cur.done !== null && R.cur.done < T.RKH_MIN_DONE) return { evidence: `RKH ${monthShort(R.cur.p)} selesai ${fmt(R.cur.completed, 0)} dari ${fmt(R.cur.created, 0)} (${fmt(R.cur.done * 100, 0)}%)${rot}`, priority: 'sedang' };
-      return null; } },
+    // Hanya bila RKH dipakai di aplikasi (rencana manual di luar aplikasi tidak dinilai) dan bulan laporan banyak yang belum selesai
+    when: d => { const R = d.rkh, c = R && R.cur;
+      if (!c || c.done === null || c.done >= DECK_CONFIG.THRESHOLDS.RKH_MIN_DONE) return null;
+      return { evidence: `RKH ${monthShort(c.p)} selesai ${fmt(c.completed, 0)} dari ${fmt(c.created, 0)} (${fmt(c.done * 100, 0)}%)`, priority: c.done < 0.5 ? 'tinggi' : 'sedang' }; } },
 
   { code: 'R17', title: 'Pertahankan praktik yang sudah baik',
     action: 'Dokumentasikan praktik panen dan perawatan yang membuat kinerja naik agar tetap dijalankan.',

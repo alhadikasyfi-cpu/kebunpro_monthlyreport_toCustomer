@@ -169,9 +169,10 @@ function mergeAnswerBlocks(blocks) {
  */
 function buildClaudePacket(data, plan) {
   const cfg = DECK_CONFIG.CLAUDE_INPUT, sec = DECK_CONFIG.SECURITY || {};
-  const mains = plan.mains, leads = plan.leads, appendix = plan.appendix;
-  const summaryMains = (plan.costMain ? [plan.costMain] : []).concat(mains);
-  const content = leads.concat(appendix);
+  const mains = plan.mains;
+  const summaryMains = mains;
+  const appendix = plan.appendix.filter(t => !t.cont);   // slide lanjutan tabel tidak butuh teks Claude
+  const content = appendix;
   const detected = detectAnomalies(plan.topics, data);
   const candidates = detectRecommendations(data, plan.topics, detected);
   const first = data.yield[0], last = data.yield[data.yield.length - 1];
@@ -216,7 +217,7 @@ KINERJA BULAN INI: EMPAT PILAR KPI DI SLIDE ${plan.introPage || 3} (dihitung scr
 ${computePillars(data).map(pl => `- ${pl.title.toUpperCase()}: ` + [pl.main, pl.sub].filter(Boolean).map(k => `${k.name} ${k.value}${k.unit ? ' ' + k.unit : ''} (${k.note})`).join('; ')).join('\n')}
 
 RENCANA KERJA HARIAN (RKH)
-${describeRkh(data) || '-'}
+${describeRkh(data) || 'Tidak dipakai di aplikasi (kebun bisa memakai rencana manual). JANGAN dibahas, dijadikan temuan, atau direkomendasikan.'}
 
 PRODUK SAWITPRO YANG BOLEH DISARANKAN (field product; pilih hanya bila langsung membantu masalahnya)
 ${(DECK_CONFIG.SAWITPRO_PRODUCTS || []).map(x => `- ${x.name} | ${x.benefit} | cocok untuk kode: ${(x.codes || []).join(', ') || '-'}`).join('\n') || '-'}
@@ -225,12 +226,11 @@ RENCANA BLOK JAWABAN (tiap blok = SATU objek JSON satu baris, ditempel pengguna 
 ${blockPlan}
 
 STRUKTUR DECK (agenda tetap, disusun script)
-DECK UTAMA: slide 1 cover; slide 2 Agenda & Tujuan Pertemuan (agenda.outcomes + agenda_notes); slide ${plan.introPage || 3} Kinerja Bulan Ini (executive_summary + intro_notes, di atas EMPAT PILAR KPI); slide ${plan.anomTopic ? plan.anomTopic.page : '-'} Temuan (anomalies); slide ${plan.conclTopic ? plan.conclTopic.page : '-'} Actionable Item (conclusion); slide ${plan.costMain ? plan.costMain.page : '-'} Struktur Biaya (summaries id m_biaya); slide ${plan.closingPage || '-'} Terima Kasih.
-DATA PENDUKUNG: slide ${plan.dividerPage || '-'} pembatas Lampiran, slide ${plan.tocPage || '-'} Daftar Data Pendukung, lalu tiap bagian = slide ringkasan bagian + slide lampirannya (lihat "ALUR LAMPIRAN").
-SLIDE RINGKASAN (summaries; Struktur Biaya di deck utama, ringkasan bagian di data pendukung):
-${summaryMains.map(m => `Slide ${m.page} [id=${m.id}] ${m.title} — pertanyaan owner: ${(m.group && m.group.question) || '-'}; merangkum lampiran: ${m.members.map(x => `slide ${x.page} ${x.title}`).join('; ') || '-'}; ` +
-  (m.structure ? `visual yang tampil: batang komposisi biaya + tabel komponen.\n${m.structure.facts}\nCatatan di slide: ${m.structure.caption}`
-    : m.summary ? `visual yang tampil: grafik kesimpulan ${m.summary.desc || ''} (${m.summary.curLabel} vs ${m.summary.refLabel}): ${summaryLine(m.summary)}` : `visual yang tampil: ${m.chartTopic.title}`)).join('\n') || '-'}
+DECK UTAMA (maks. 10 slide): slide 1 cover; slide 2 Agenda & Tujuan Pertemuan (agenda.outcomes + agenda_notes); slide ${plan.introPage || 3} Kinerja Bulan Ini (executive_summary + intro_notes, di atas EMPAT PILAR KPI); slide ${mains.map(m => `${m.page} ${m.title}`).join('; slide ')} (summaries); slide ${plan.anomTopic ? plan.anomTopic.page : '-'} Temuan (anomalies); slide ${plan.conclTopic ? plan.conclTopic.page : '-'} Actionable Item (conclusion).
+SETELAHNYA: slide ${plan.closingPage || '-'} Terima Kasih, slide ${plan.dividerPage || '-'} pembatas Lampiran, slide ${plan.tocPage || '-'} Daftar Lampiran, lalu lampiran per slide utama (lihat "ALUR LAMPIRAN"; tabel panjang berlanjut ke slide lanjutan tanpa teks).
+SLIDE UTAMA ANALISIS (summaries, satu per id):
+${summaryMains.map(m => `Slide ${m.page} [id=${m.id}] ${m.title} — pertanyaan owner: ${(m.group && m.group.question) || '-'}; lampiran: ${m.members.map(x => `slide ${x.page} ${x.title}`).join('; ') || '-'}; ` +
+  (m.visual ? `visual yang tampil: ${m.visual.desc}. Angka di visual: ${m.visual.line}` : `visual yang tampil: ${m.chartTopic ? m.chartTopic.title : '-'}`)).join('\n') || '-'}
 
 ALUR LAMPIRAN (sudah ditetapkan, ikuti urutannya)
 Logika besar: kinerja bulan ini (hasil, uang masuk, biaya, laba) → alur panen ke muat yang tidak tercatat (data panen, muat, dan penjualan yang belum diinput) → penyebab naik-turun hasil (JJG/ha, BJR, umur tanaman) → keuangan (laba kotor, komposisi biaya, harga, margin) → tim kerja → tindakan.
@@ -422,7 +422,7 @@ function normalizeAiAnswer(out, plan) {
   const sec = DECK_CONFIG.SECURITY || {};
   if (out.storyline && sec.LOG_AI_OUTPUT) Logger.log(`[Storyline] ${JSON.stringify(out.storyline).slice(0, 3000)}`);
   const known = {};
-  plan.leads.concat(plan.appendix).forEach(t => { known[t.id] = t; });
+  plan.appendix.filter(t => !t.cont).forEach(t => { known[t.id] = t; });
   const byId = {};
   (Array.isArray(out.slides) ? out.slides : []).forEach(s => {
     const t = s && known[s.id];
@@ -441,7 +441,7 @@ function normalizeAiAnswer(out, plan) {
     };
   });
 
-  const mainIds = {}, summaryMains = plan.mains.concat(plan.costMain ? [plan.costMain] : []);
+  const mainIds = {}, summaryMains = plan.mains;
   summaryMains.forEach(m => { mainIds[m.id] = true; });
   const summaries = {};
   (Array.isArray(out.summaries) ? out.summaries : []).forEach(m => {
@@ -451,7 +451,7 @@ function normalizeAiAnswer(out, plan) {
                         speaker_notes: trimToSentence(m.speaker_notes, AI_LIMITS.NOTES_MAX_CHARS) };
   });
 
-  const missSlides = plan.appendix.filter(t => !byId[t.id]);
+  const missSlides = plan.appendix.filter(t => !t.cont && !byId[t.id]);
   if (missSlides.length) RUN_WARNINGS.push(`Jawaban Claude belum memuat lampiran ${missSlides.map(t => t.appx).join(', ')}; teks lampiran itu diisi otomatis dari data.`);
   const missMain = summaryMains.filter(m => !summaries[m.id]);
   if (missMain.length) RUN_WARNINGS.push(`Jawaban Claude belum memuat ringkasan ${missMain.map(m => `"${m.title}"`).join(', ')}; diisi otomatis dari data.`);
@@ -512,7 +512,7 @@ function fallbackSummary(data) {
 /** Saran cadangan per slide, dipilih berdasarkan SINYAL tren (generik untuk semua kebun). */
 const NOTES_RECO = {
   tanpaberat: { default: 'Saran tindakan: input berat dari tiket timbang untuk setiap trip di hari yang sama, dan cek mingguan trip yang belum ada data penjualannya.' },
-  blokunsale: { default: 'Saran tindakan: telusuri blok yang berulang kali tanpa penjualan bersama mandor panen dan muat.' },
+  blokunsale: { default: 'Saran tindakan: catat blok asal pada setiap trip penjualan di aplikasi, lalu cek mingguan blok yang penjualannya belum tercatat.' },
   laba: { turun: 'Saran tindakan: laba kotor menurun; cek bulan dengan biaya pekerja melonjak dan rencanakan pengeluaran besar di bulan berpendapatan tinggi.',
           default: 'Saran tindakan: pantau bulan dengan laba kotor terendah dan cocokkan dengan rincian biaya pekerjanya.' },
   biayakomposisi: { naik: 'Saran tindakan: biaya pekerja meningkat; tinjau hari kerja dan output per orang pada komponen terbesar.',
@@ -608,7 +608,7 @@ function fallbackActions(data, pageOf) {
         : `Yield berkisar ${fmt(y.min.value, 2)}–${fmt(y.max.value, 2)} ton/ha dengan tren ${gy.trend}. Jaga rotasi panen dan tegakkan kriteria matang panen mulai bulan depan.`,
       priority: up ? 'sedang' : 'tinggi', basis_pages: [pageOf('yield'), pageOf('jjg'), pageOf('bjr')] });
   }
-  const missing = checkDataCompleteness(data);
+  const missing = [];   // data yang tidak ada di sheet tidak dijadikan rekomendasi
   const inconsistent = describeRelations(data).split('\n').filter(l => /ANOMALI DATA|TIDAK KONSISTEN/.test(l));
   if (missing.length || inconsistent.length) out.push({ title: 'Lengkapi dan selaraskan data kebun',
     detail: [missing.length ? `Data belum tersedia: ${missing.slice(0, 4).join(', ')}${missing.length > 4 ? ', dan lainnya' : ''}.` : '',

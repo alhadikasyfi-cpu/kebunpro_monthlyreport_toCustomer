@@ -152,7 +152,7 @@ function readHaraVegetatif(ss) {
 /* ------------------------------------------------------------------------- */
 
 /**
- * Komposisi jenis tanah blok unik + seberapa sering blok tiap jenis tanah tidak tercatat menjual.
+ * Komposisi jenis tanah blok unik + seberapa sering penjualan blok tiap jenis tanah belum tercatat.
  * -> {groups:[{key,name,ha,pct,count,blocks,unsaleRate,type}], totalHa, unknownHa, unknownPct, knownPct, dominant}
  */
 function buildSoilAnalytics(d) {
@@ -332,7 +332,7 @@ function describeSoil(d) {
     S.groups.map(g => `${g.name} ${fmt(g.ha, 1)} ha (${fmt(g.pct, 0)}%, ${g.count} blok${g.avgAge !== null ? `, umur rata-rata ${fmt(g.avgAge, 0)} th` : ''})`).join('; ') + '.'];
   S.groups.filter(g => g.type).forEach(g => L.push(`- ${g.name}: kendala ${g.type.kendala}; fokus hara ${g.type.fokus}${g.type.extra ? `; ${g.type.extra}` : ''}.`));
   const withRate = S.groups.filter(g => g.unsaleRate !== null);
-  if (withRate.length > 1) L.push(`- Blok tanpa penjualan per jenis tanah (% bulan-blok tidak tercatat menjual): ${withRate.map(g => `${g.name} ${fmt(g.unsaleRate, 0)}%`).join('; ')}.`);
+  if (withRate.length > 1) L.push(`- Blok yang penjualannya belum tercatat per jenis tanah (% bulan-blok): ${withRate.map(g => `${g.name} ${fmt(g.unsaleRate, 0)}%`).join('; ')}.`);
   if (S.unknownHa > 0) L.push(`PERLU DICEK: jenis tanah belum tercatat untuk ${S.unknownCount} blok (${fmt(S.unknownHa, 1)} ha, ${fmt(S.unknownPct, 0)}% luas); dosis pupuk belum bisa disesuaikan dengan tanah. Saran: uji tanah per blok/kelompok blok dan isi jenis tanah di data blok KebunPRO.`);
   else L.push('- Jenis tanah sudah tercatat untuk semua blok.');
   return L.join('\n');

@@ -312,7 +312,7 @@ function drawBarChart(b, series, o) {
     b.rect(cx - bw / 2, Math.min(y, y0), bw, Math.abs(y0 - y), color);
     b.label(lf(v), cx, v < 0 ? y + 1 : y - 15, Math.max(f.step + 8, 36), { bold: true });
   });
-  (o.extraLines || []).forEach((l, k) => drawPolyline(b, f, extra[k], l.color, l.dashed, null));
+  (o.extraLines || []).forEach((l, k) => drawPolyline(b, f, extra[k], l.color, l.dashed, l.labelFmt || null));
   if (o.legend) chLegend(b, o.legend);
 }
 
@@ -368,7 +368,7 @@ function drawHBarChart(b, items, o) {
 function drawTable(b, headers, rows, o) {
   if (!rows || !rows.length) return;
   const A = DECK_CONFIG.LAYOUT.CONTENT;
-  const fit = fitTable(headers, rows.slice(0, Math.min(9, DECK_CONFIG.MAX_TABLE_ROWS)), o, A.width, A.height);   // maks. ±9 baris pada 18px
+  const fit = fitTable(headers, rows.slice(0, DECK_CONFIG.MAX_TABLE_ROWS), o, A.width, A.height);   // baris & huruf dipaskan agar tidak melewati footer
   b.table(A.left, A.top, A.width, [headers].concat(fit.rows), fit.o);
 }
 
@@ -597,13 +597,13 @@ function drawFlowFunnel(b, F) {
  * Ukuran angka seragam di satu baris (mengikuti angka terpanjang); warna pembanding: hijau = baik, merah = perlu perhatian.
  * pillars: [{title, main:{name, value, unit, note, tone}, sub}]
  */
-function drawPillarCards(b, pillars, top0) {
+function drawPillarCards(b, pillars, top0, reserveBottom) {
   const C = DECK_CONFIG.COLOR, L = DECK_CONFIG.LAYOUT, T = DECK_CONFIG.TYPE, W = DECK_CONFIG.WEIGHT;
   const list = (pillars || []).slice(0, 4);
   if (!list.length) return;
   const n = list.length, gap = L.CARD_GAP, P = 12;
   const w = (L.RIGHT - L.MARGIN - gap * (n - 1)) / n, inner = w - 2 * P;
-  const start = top0 || L.BODY_TOP, cardH = L.BOTTOM - start;
+  const start = top0 || L.BODY_TOP, cardH = L.BOTTOM - start - (reserveBottom || 0);   // ruang bawah untuk tombol lampiran
   const noteColor = k => (k.tone === 'good' ? C.GREEN : k.tone === 'bad' ? C.DANGER : C.MUTED);
   // Ukuran angka seragam per baris: terbesar yang muat untuk SEMUA kartu
   const fitSize = (ks, sizes) => sizes.find(s => ks.every(k => estWidth(k.value, s, true) + (k.unit ? estWidth(' ' + k.unit, T.KPI_UNIT, true) : 0) <= inner)) || sizes[sizes.length - 1];
@@ -612,15 +612,15 @@ function drawPillarCards(b, pillars, top0) {
   const subV = subs.length ? fitSize(subs, [T.METRIC, T.CARD_TITLE, T.BODY]) : T.METRIC;
   const labH = T.KPI_LABEL * 1.35, eyeH = T.EYEBROW * 1.35;
   // Tinggi catatan seragam (baris terbanyak); huruf catatan diperkecil bila kartu tidak cukup tinggi
-  let fs = T.BODY, mainNoteH, subNoteH;
+  let fs = T.BODY, mainNoteH, subNoteH, subNotes = true;
   const layout = () => {
     mainNoteH = Math.max.apply(null, mains.map(k => estLines(k.note, fs, inner))) * fs * 1.3;
-    subNoteH = subs.length ? Math.max.apply(null, subs.map(k => estLines(k.note, fs, inner))) * fs * 1.3 : 0;
+    subNoteH = subs.length && subNotes ? Math.max.apply(null, subs.map(k => estLines(k.note, fs, inner))) * fs * 1.3 : 0;
     return P + eyeH + 10 + labH + 2 + bigV * 1.1 + 4 + mainNoteH + (subs.length ? 18 + labH + 2 + subV * 1.15 + 3 + subNoteH : 0) + P;
   };
-  // Kartu terlalu penuh: perkecil huruf catatan dulu, lalu angka utama
-  while (layout() > cardH && (fs > T.CAPTION || bigV > T.METRIC)) {
-    if (fs > T.CAPTION) fs = Math.max(T.CAPTION, fs - 0.5); else bigV = bigV > T.KPI_COMPACT ? T.KPI_COMPACT : T.METRIC;
+  // Kartu terlalu penuh: perkecil huruf catatan, lalu angka utama, lalu sembunyikan catatan KPI pendukung
+  while (layout() > cardH && (fs > T.CAPTION || bigV > T.METRIC || subNotes)) {
+    if (fs > T.CAPTION) fs = Math.max(T.CAPTION, fs - 0.5); else if (bigV > T.METRIC) bigV = bigV > T.KPI_COMPACT ? T.KPI_COMPACT : T.METRIC; else subNotes = false;
   }
   if (layout() > cardH) RUN_WARNINGS.push('Kartu Kinerja Bulan Ini terlalu penuh; persingkat paragraf pembuka.');
   const label = (txt, x, y) => {
@@ -649,112 +649,167 @@ function drawPillarCards(b, pillars, top0) {
     y += 18;
     label(pl.sub.name, x, y); y += labH + 2;
     value(pl.sub, x, y, subV, C.INK); y += subV * 1.15 + 3;
-    note(pl.sub, x, y, subNoteH);
+    if (subNotes) note(pl.sub, x, y, subNoteH);
   });
 }
 
 /* ------------------------------------------------------------------------- */
-/* Struktur Biaya: ke mana uang pendapatan dan biaya pekerja bulan laporan    */
+/* Slide utama: Uang Masuk, Keluar, dan Sisa                                  */
 /* ------------------------------------------------------------------------- */
-
-/** Bagi 100 kotak sesuai porsi (sisa terbesar), minimal 1 kotak untuk porsi > 0. */
-function waffleCounts(values) {
-  const tot = values.reduce((a, v) => a + v, 0);
-  if (!tot) return values.map(() => 0);
-  const raw = values.map(v => (v / tot) * 100), cnt = raw.map(r => (r > 0 ? Math.max(1, Math.floor(r)) : 0));
-  let left = 100 - cnt.reduce((a, v) => a + v, 0);
-  const order = raw.map((r, i) => ({ i, f: r - Math.floor(r) })).sort((a, b2) => b2.f - a.f);
-  for (let k = 0; left > 0; k = (k + 1) % order.length) { cnt[order[k].i]++; left--; }
-  while (left < 0) { const i = cnt.indexOf(Math.max.apply(null, cnt)); cnt[i]--; left++; }
-  return cnt;
-}
 
 /**
- * Dibaca owner dari atas ke bawah:
- *  1. "Dari pendapatan RpX": satu batang 100% = biaya pekerja vs laba kotor (bila pendapatan tercatat).
- *  2. "Biaya pekerja RpY terdiri dari": diagram 100 kotak (setiap kotak = 1% biaya) + legenda per komponen:
- *     Rp, porsi, dan perbandingan dengan rata-rata bulan sebelumnya. Komponen rutin yang kosong = "belum diinput".
- *  3. Keterangan singkat di bawah.
- * cs: hasil buildCostStructure()
+ * Atas: laba kotor 6 bulan terakhir (batang; rugi merah, bulan laporan hijau tua).
+ * Tengah: pendapatan bulan laporan = biaya pekerja + laba kotor (satu batang 100%).
+ * Bawah: komposisi biaya pekerja (panen / muat / perawatan) satu batang 100% + legenda Rp dan porsi.
  */
-function drawCostStructure(b, cs) {
+function drawMoneySlide(b, cs, laba) {
   const C = DECK_CONFIG.COLOR, A = DECK_CONFIG.LAYOUT.CONTENT, T = DECK_CONFIG.TYPE, W = DECK_CONFIG.WEIGHT;
-  const parts = cs.rows.filter(r => r.kind === 'part');
-  const shown = parts.filter(r => r.cur > 0);
-  if (!shown.length) return;
-  const mon = monthLong(cs.p);
-  const head = (txt, y) => b.text(txt, A.left, y, A.width, 15, { size: T.BODY, weight: W.HEAVY, color: C.INK, align: 'START', valign: 'TOP', noGroup: true, nowrap: true });
+  const head = (txt, y) => b.text(txt, A.left, y, A.width, 14, { size: T.BODY, weight: W.HEAVY, color: C.INK, align: 'START', valign: 'TOP', noGroup: true, nowrap: true });
   let y = A.top;
-  // 1. Pendapatan -> biaya pekerja vs laba kotor
-  if (cs.revenue && cs.profit !== null && cs.revenue > 0) {
-    head(`Dari pendapatan ${mon}: ${fmtRpShort(cs.revenue)}`, y);
-    y += 19;
-    const costPct = Math.max(0, Math.min(100, (cs.total / cs.revenue) * 100)), bh = 24;
-    const segs = [{ name: 'Biaya pekerja', v: cs.total, pct: costPct, color: C.WARNING },
-                  { name: cs.profit >= 0 ? 'Laba kotor' : 'Rugi', v: cs.profit, pct: 100 - costPct, color: cs.profit >= 0 ? C.GREEN : C.DANGER }];
+  // 1. Laba kotor 6 bulan
+  if (laba && laba.length >= 2) {
+    head('Laba kotor per bulan (Rp juta)', y);
+    const top = y + 18, h = 92, n = laba.length, step = A.width / n, bw = Math.min(46, step * 0.6);
+    const vals = laba.map(x => x.value / 1e6), max = Math.max(0, Math.max.apply(null, vals)), min = Math.min(0, Math.min.apply(null, vals));
+    const span = (max - min) || 1, y0 = top + 14 + (h - 28) * (max / span);
+    b.line(A.left, y0, A.left + A.width, y0, C.DIVIDER, 0.75);
+    laba.forEach((x, i) => {
+      const v = vals[i], cx = A.left + step * (i + 0.5), bh = Math.max(1.5, (h - 28) * Math.abs(v) / span);
+      const last = i === n - 1, color = v < 0 ? C.DANGER : last ? C.GREEN : C.CHART_LIGHT;
+      b.rect(cx - bw / 2, v >= 0 ? y0 - bh : y0, bw, bh, color);
+      b.label(fmt(v, Math.abs(v) < 10 ? 1 : 0), cx, v >= 0 ? y0 - bh - 13 : y0 + bh + 1, step, { size: T.CAPTION, weight: W.HEAVY, color: v < 0 ? C.DANGER : C.INK });
+      b.label(x.label, cx, top + h - 2, step, { size: T.CAPTION, color: last ? C.INK : C.MUTED, weight: last ? W.HEAVY : W.BODY });
+    });
+    y = top + h + 18;
+  }
+  if (!cs) return;
+  const mon = monthLong(cs.p);
+  // 2. Pendapatan = biaya pekerja + laba kotor
+  const bar = (segs, yy) => {
     let x = A.left;
+    const tot = segs.reduce((a, s) => a + Math.max(0, s.v), 0) || 1;
     segs.forEach(s => {
-      const wd = A.width * s.pct / 100;
+      const wd = A.width * Math.max(0, s.v) / tot;
       if (wd <= 0) return;
-      b.rect(x, y, wd, bh, s.color);
-      const lab = `${fmt(s.pct, 0)}%`;
-      if (estWidth(lab, T.CAPTION, true) + 6 <= wd) b.label(lab, x + wd / 2, y + 4, wd, { size: T.CAPTION, weight: W.HEAVY, color: C.ON_GREEN, height: bh - 8 });
+      b.rect(x, yy, wd, 20, s.color);
+      const lab = `${fmt((s.v / tot) * 100, 0)}%`;
+      if (estWidth(lab, T.CAPTION, true) + 6 <= wd) b.label(lab, x + wd / 2, yy + 3, wd, { size: T.CAPTION, weight: W.HEAVY, color: s.dark ? C.INK : C.ON_GREEN, height: 14 });
       x += wd;
     });
-    y += bh + 4;
     let lx = A.left;
     segs.forEach(s => {
-      const lab = `${s.name} ${fmtRpShort(s.v)} (${fmt(s.pct, 0)}%)`;
-      b.rect(lx, y + 3, 9, 9, s.color);
-      b.label(lab, lx + 13, y, estWidth(lab, T.CAPTION, true) + 12, { align: 'START', color: C.INK, size: T.CAPTION, weight: W.STRONG });
-      lx += 13 + estWidth(lab, T.CAPTION, true) + 22;
+      const lab = `${s.name} ${s.missing ? 'belum diinput' : `${fmtRpShort(s.v)} (${fmt((s.v / tot) * 100, 0)}%)`}`;
+      const lw = estWidth(lab, T.CAPTION, true) + 12;
+      if (lx + 12 + lw > A.left + A.width) return;
+      b.rect(lx, yy + 27, 8, 8, s.missing ? C.NEUTRAL : s.color);
+      b.label(lab, lx + 11, yy + 24, lw, { align: 'START', color: s.missing ? C.DANGER : C.INK, size: T.CAPTION, weight: W.STRONG });
+      lx += 11 + lw + 10;
     });
-    y += 24;
-  } else {
-    b.text(`Pendapatan ${mon} belum tercatat, sehingga laba kotor belum dapat dihitung.`, A.left, y, A.width, 15,
-      { size: T.BODY, weight: W.STRONG, color: C.DANGER, align: 'START', valign: 'TOP', noGroup: true, nowrap: true });
-    y += 26;
-  }
-  // 2. Diagram 100 kotak komposisi biaya pekerja + legenda
-  head(`Biaya pekerja ${mon}: ${fmtRpShort(cs.total)}, terdiri dari`, y);
-  y += 21;
-  const capH = cs.caption ? Math.min(3, estLines(cs.caption, T.CAPTION, A.width)) * T.CAPTION * 1.35 + 4 : 0;
-  const room = A.top + A.height - capH - y - 4;
-  const cell = Math.max(8, Math.min(14, (room - 9 * 2) / 10)), cg = 2, side = cell * 10 + cg * 9;
-  const cnt = waffleCounts(shown.map(r => r.cur));
-  let k = 0;
-  shown.forEach((r, i) => {
-    for (let c = 0; c < cnt[i]; c++, k++) {
-      const col = k % 10, row = Math.floor(k / 10);
-      b.rect(A.left + col * (cell + cg), y + row * (cell + cg), cell, cell, r.color);
-    }
-  });
-  // Legenda: satu blok per komponen (nama, Rp, porsi, vs rata-rata); komponen belum diinput ditulis jelas
-  const lx = A.left + side + 18, lw = A.left + A.width - lx;
-  const items = parts;
-  const blockH = Math.min(52, side / Math.max(1, items.length));
-  const vsTxt = r => {
-    if (r.missing) return { t: `Belum diinput (biasanya ${fmtRpShort(r.ref)})`, c: C.DANGER };
-    if (!r.ref) return { t: cs.refN ? 'Belum ada pembanding' : '', c: C.MUTED };
-    const p = ((r.cur - r.ref) / r.ref) * 100;
-    if (Math.abs(p) < 1) return { t: `Sama dengan rata-rata ${cs.refN} bulan`, c: C.MUTED };
-    const t = r.cur / r.ref > 5 ? `▲ ${fmt(r.cur / r.ref, 0)}×` : `${p >= 0 ? '▲' : '▼'} ${fmt(Math.abs(p), 0)}%`;
-    return { t: `${t} vs rata-rata ${cs.refN} bulan (${fmtRpShort(r.ref)})`, c: p > 0 ? C.DANGER : C.GREEN };
   };
-  items.forEach((r, i) => {
-    const by = y + i * blockH;
-    b.rect(lx, by + 3, 10, 10, r.missing ? C.NEUTRAL : r.color);
-    const segs = [{ text: r.name, size: T.BODY, weight: W.HEAVY, color: C.INK }];
-    if (!r.missing) segs.push({ text: `  ${fmtRpShort(r.cur)} · ${fmt(r.share, 0)}%`, size: T.BODY, weight: W.STRONG, color: C.INK });
-    b.richText(segs, lx + 15, by, lw - 15, 16, { align: 'START', valign: 'TOP', noGroup: true, nowrap: true });
-    const v = vsTxt(r);
-    if (v.t) b.text(v.t, lx + 15, by + 16, lw - 15, 13, { size: T.CAPTION, weight: W.STRONG, color: v.c, align: 'START', valign: 'TOP', noGroup: true, nowrap: true });
-    // rincian perawatan: kelompok pekerjaan terbesar
-    if (r.name === 'Perawatan' && !r.missing && cs.cats.length && blockH >= 42) b.text(`Terbesar: ${cs.cats[0].name.toLowerCase()} ${fmt(cs.cats[0].share, 0)}%`,
-      lx + 15, by + 29, lw - 15, 13, { size: T.CAPTION, color: C.MUTED, align: 'START', valign: 'TOP', noGroup: true, nowrap: true });
+  if (cs.revenue && cs.profit !== null && cs.revenue > 0) {
+    head(`Pendapatan ${mon}: ${fmtRpShort(cs.revenue)}`, y);
+    bar([{ name: 'Biaya pekerja', v: cs.total, color: C.WARNING }, { name: cs.profit >= 0 ? 'Laba kotor' : 'Rugi', v: Math.max(0, cs.profit), color: cs.profit >= 0 ? C.GREEN : C.DANGER }], y + 18);
+    y += 18 + 44;
+  } else {
+    b.text(`Pendapatan ${mon} belum tercatat, sehingga laba kotor belum dapat dihitung.`, A.left, y, A.width, 14, { size: T.BODY, weight: W.STRONG, color: C.DANGER, align: 'START', valign: 'TOP', noGroup: true, nowrap: true });
+    y += 24;
+  }
+  // 3. Komposisi biaya pekerja
+  const parts = cs.rows.filter(r => r.kind === 'part');
+  if (!parts.length) return;
+  head(`Biaya pekerja ${mon}: ${fmtRpShort(cs.total)}`, y);
+  bar(parts.map(r => ({ name: r.name, v: r.missing ? 0 : r.cur, color: r.color, dark: r.color === C.YELLOW || r.color === C.NEUTRAL, missing: r.missing })), y + 18);
+  y += 18 + 44;
+  if (cs.caption && y < A.top + A.height - 10) b.text(cs.caption, A.left, y, A.width, A.top + A.height - y, { size: T.CAPTION, color: C.MUTED, align: 'START', valign: 'TOP', lineSpacing: 120, noGroup: true });
+}
+
+/* ------------------------------------------------------------------------- */
+/* Slide utama: Blok Prioritas                                                */
+/* ------------------------------------------------------------------------- */
+
+/** Ringkasan blok (2 angka) lalu 6 blok prioritas: batang capaian janjang/ha vs standar (garis 100%) + tindak lanjut. */
+function drawBlockPriority(b, P) {
+  const C = DECK_CONFIG.COLOR, A = DECK_CONFIG.LAYOUT.CONTENT, T = DECK_CONFIG.TYPE, W = DECK_CONFIG.WEIGHT;
+  const lowLim = DECK_CONFIG.THRESHOLDS.BLOCK_LOW_ACH;
+  // 1. Dua angka kunci
+  const kp = [{ v: `${fmt(P.lowPct, 0)}%`, t: `luas blok di bawah ${fmt(lowLim * 100, 0)}% standar janjang` },
+              P.gapRpTotal ? { v: fmtRpShort(P.gapRpTotal), t: `potensi belum tercapai per tahun${P.shortData ? ' (indikatif)' : ''}` } : null].filter(Boolean);
+  const kw = (A.width - 10 * (kp.length - 1)) / kp.length;
+  kp.forEach((k, i) => {
+    const x = A.left + i * (kw + 10);
+    b.card(x, A.top, kw, 46);
+    b.text(k.v, x + 10, A.top + 5, kw - 20, 22, { size: T.METRIC, weight: W.HEAVY, color: C.DANGER, align: 'START', valign: 'MIDDLE', noGroup: true, nowrap: true });
+    b.text(k.t, x + 10, A.top + 28, kw - 20, 13, { size: T.CAPTION, weight: W.STRONG, color: C.MUTED, align: 'START', valign: 'TOP', noGroup: true, nowrap: true });
   });
-  b.text('1 kotak = 1% biaya pekerja', A.left, y + side + 3, side, 12, { size: T.CAPTION - 0.5, color: C.MUTED, align: 'START', valign: 'TOP', noGroup: true, nowrap: true });
-  if (cs.caption) b.text(cs.caption, A.left, A.top + A.height - capH + 2, A.width, capH - 2, { size: T.CAPTION, color: C.MUTED, align: 'START', valign: 'TOP', lineSpacing: 120, noGroup: true });
+  // 2. Blok prioritas
+  const rows = blockFocusRows(P), top = A.top + 58;
+  b.text(P.priority.length ? 'Blok prioritas: janjang/ha/tahun dibanding standar umurnya' : 'Blok dengan capaian terendah (semua di atas standar)', A.left, top, A.width, 14, { size: T.BODY, weight: W.HEAVY, color: C.INK, align: 'START', valign: 'TOP', noGroup: true, nowrap: true });
+  const labW = 112, noteW = 128, pctW = 36, barX = A.left + labW, barW = A.width - labW - noteW - pctW;
+  const rowH = Math.min(36, (A.top + A.height - top - 34) / Math.max(1, rows.length)), y0 = top + 22, maxA = 1.2;
+  const x100 = barX + barW * (1 / maxA);
+  b.line(x100, y0 - 4, x100, y0 + rowH * rows.length - 4, C.MUTED, 0.75, true);
+  b.label('standar', x100, y0 + rowH * rows.length - 2, 50, { size: T.CAPTION - 0.5, color: C.MUTED });
+  rows.forEach((r, i) => {
+    const y = y0 + i * rowH;
+    b.text(r.name, A.left, y, labW - 6, 14, { size: T.BODY, weight: W.HEAVY, color: C.INK, align: 'START', valign: 'TOP', noGroup: true, nowrap: true });
+    b.text(`${fmt(r.ha, 1)} ha · ${r.age} th`, A.left, y + 14, labW - 6, 12, { size: T.CAPTION, color: C.MUTED, align: 'START', valign: 'TOP', noGroup: true, nowrap: true });
+    const w = Math.max(2, barW * Math.min(maxA, r.ach) / maxA);
+    b.rect(barX, y + 5, w, 14, r.ach < lowLim ? C.DANGER : C.WARNING);
+    b.text(`${fmt(r.ach * 100, 0)}%`, barX + barW + 4, y + 3, pctW, 16, { size: T.BODY, weight: W.HEAVY, color: r.ach < lowLim ? C.DANGER : C.INK, align: 'START', valign: 'MIDDLE', noGroup: true, nowrap: true });
+    b.text(blockShortNote(r), barX + barW + pctW + 4, y + 3, noteW - 4, 16, { size: T.CAPTION, weight: W.STRONG, color: C.INK, align: 'START', valign: 'MIDDLE', noGroup: true, nowrap: true });
+  });
+}
+
+/* ------------------------------------------------------------------------- */
+/* Slide utama: Pencatatan dan Produktivitas Tim                              */
+/* ------------------------------------------------------------------------- */
+
+/**
+ * Kiri: kelengkapan input bulan laporan (batang 0–100%, angka bulan lalu di bawahnya).
+ * Kanan: produktivitas mandor panen (jjg/hari; maks. 5 mandor) dan rata-rata mandor muat.
+ */
+function drawRecordTeam(b, rt) {
+  const C = DECK_CONFIG.COLOR, A = DECK_CONFIG.LAYOUT.CONTENT, T = DECK_CONFIG.TYPE, W = DECK_CONFIG.WEIGHT;
+  const both = rt.inputs.length && (rt.panen.length || rt.muat.length);
+  const colW = both ? (A.width - 16) / 2 : A.width, xR = A.left + colW + 16;
+  const head = (txt, x, w) => b.text(txt, x, A.top, w, 14, { size: T.BODY, weight: W.HEAVY, color: C.INK, align: 'START', valign: 'TOP', noGroup: true, nowrap: true });
+  if (rt.inputs.length) {
+    head(`Kelengkapan input ${monthShort(rt.p)}`, A.left, colW);
+    const rowH = Math.min(58, (A.height - 24) / rt.inputs.length);
+    rt.inputs.forEach((r, i) => {
+      const y = A.top + 24 + i * rowH, barW = colW - 40;
+      b.text(r.label, A.left, y, colW, 13, { size: T.CAPTION + 0.5, weight: W.STRONG, color: C.INK, align: 'START', valign: 'TOP', noGroup: true, nowrap: true });
+      b.rect(A.left, y + 16, barW, 12, C.TINT);
+      const good = r.cur >= 95, color = good ? C.GREEN : r.cur >= 80 ? C.WARNING : C.DANGER;
+      b.rect(A.left, y + 16, Math.max(2, barW * r.cur / 100), 12, color);
+      b.text(`${fmt(r.cur, 0)}%`, A.left + barW + 3, y + 14, 37, 16, { size: T.BODY, weight: W.HEAVY, color, align: 'START', valign: 'MIDDLE', noGroup: true, nowrap: true });
+      if (r.ref !== null && r.ref !== undefined) b.text(`${monthShort(rt.q)}: ${fmt(r.ref, 0)}%`, A.left, y + 30, colW, 12, { size: T.CAPTION, color: C.MUTED, align: 'START', valign: 'TOP', noGroup: true, nowrap: true });
+    });
+  }
+  if (rt.panen.length || rt.muat.length) {
+    const x = both ? xR : A.left, list = (rt.panen.length ? rt.panen : rt.muat).slice(0, 5), role = rt.panen.length ? 'panen' : 'muat';
+    head(`Mandor ${role} (jjg/hari, ${list[0].period})`, x, colW);
+    const max = Math.max.apply(null, list.map(t => Math.max(t.cur, t.ref || 0))) || 1;
+    const rowH = Math.min(46, (A.height - 24 - (rt.muat.length && role === 'panen' ? 30 : 0)) / list.length), labW = Math.min(90, colW * 0.42), barW = colW - labW - 36;
+    list.forEach((t, i) => {
+      const y = A.top + 24 + i * rowH;
+      b.text(t.name.length > 16 ? t.name.slice(0, 15) + '…' : t.name, x, y, labW - 4, 14, { size: T.CAPTION + 0.5, weight: W.STRONG, color: C.INK, align: 'START', valign: 'TOP', noGroup: true, nowrap: true });
+      b.text(`${fmt(t.days, 0)} hari`, x, y + 13, labW - 4, 12, { size: T.CAPTION - 0.5, color: C.MUTED, align: 'START', valign: 'TOP', noGroup: true, nowrap: true });
+      const up = t.ref ? t.cur >= t.ref : true;
+      b.rect(x + labW, y + 2, Math.max(2, barW * t.cur / max), 11, C.GREEN);
+      if (t.ref) b.rect(x + labW, y + 15, Math.max(2, barW * t.ref / max), 6, C.NEUTRAL);
+      b.text(fmt(t.cur, 0), x + labW + barW + 3, y, 34, 14, { size: T.CAPTION + 0.5, weight: W.HEAVY, color: up ? C.INK : C.DANGER, align: 'START', valign: 'MIDDLE', noGroup: true, nowrap: true });
+    });
+    const yl = A.top + 24 + list.length * rowH + 4;
+    b.rect(x, yl + 3, 9, 6, C.NEUTRAL);
+    b.label(list[0].prevPeriod ? `${list[0].prevPeriod} (bulan lalu)` : 'bulan lalu', x + 12, yl, colW - 12, { align: 'START', size: T.CAPTION - 0.5, color: C.MUTED });
+    if (role === 'panen' && rt.muat.length) {
+      const avg = rt.muat.reduce((a, t) => a + t.cur, 0) / rt.muat.length, ref = rt.muat.filter(t => t.ref);
+      const avgRef = ref.length ? ref.reduce((a, t) => a + t.ref, 0) / ref.length : null;
+      b.text(`Mandor muat: rata-rata ${fmt(avg, 0)} jjg/hari${avgRef ? ` (bulan lalu ${fmt(avgRef, 0)})` : ''}, ${rt.muat.length} mandor`, x, yl + 16, colW, 13,
+        { size: T.CAPTION, weight: W.STRONG, color: C.INK, align: 'START', valign: 'TOP', noGroup: true });
+    }
+  }
 }
 
 /* ------------------------------------------------------------------------- */
@@ -977,7 +1032,9 @@ function drawDetailButtons(b, items, top) {
   items.forEach((it, i) => {
     const col = cols === 2 ? i % 2 : 0, row = cols === 2 ? Math.floor(i / 2) : i;
     const label = cols === 2 ? it.short : it.label;
-    b.button(label, I.left + col * (w + 5.6), y + row * (h + gap), w, h, it.pageId, { variant: 'secondary', align: 'START' });
+    // label tetap satu baris: huruf diperkecil bila perlu (min. 7 pt)
+    const size = Math.max(7, Math.min(T.PILL, T.PILL * (w - 16) / estWidth(label, T.PILL, true)));
+    b.button(label, I.left + col * (w + 5.6), y + row * (h + gap), w, h, it.pageId, { variant: 'secondary', align: 'START', size });
   });
   const rowsUsed = cols === 2 ? Math.ceil(items.length / 2) : items.length;
   if (y + rowsUsed * (h + gap) - gap > L.BOTTOM + 1) RUN_WARNINGS.push('Tombol lampiran melebihi batas bawah slide; persingkat insight ringkasan.');

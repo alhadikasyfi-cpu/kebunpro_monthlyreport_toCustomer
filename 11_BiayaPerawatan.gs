@@ -92,16 +92,22 @@ function upkeepActivity(raw) {
 }
 
 /** "PRUNING; 19110000, SPRAYING; 180000" -> [{code, name, cat, cost}] (kode sama dalam satu bulan dijumlahkan). */
+/**
+ * "KODE; biaya" atau format per blok "KODE; biaya; blok" dipisah koma -> item per kode pekerjaan (biaya dijumlah),
+ * masing-masing dengan rincian biaya per blok {blocks: {blok: Rp}} bila blok dicatat.
+ */
 function parseUpkeepItems(text) {
   const out = {};
-  String(text || '').split(/,\s*(?=[A-Za-z_])/).forEach(part => {
-    const m = part.match(/^\s*([^;]+);\s*(.+?)\s*$/);
+  String(text || '').split(/,\s*(?=[A-Za-z_][^;,]*;)/).forEach(part => {
+    const m = part.match(/^\s*([^;]+);\s*([^;]+?)\s*(?:;\s*(.*?))?\s*$/);
     if (!m) return;
     const cost = parseNum(m[2]);
     if (cost === null) return;
     const a = upkeepActivity(m[1]);
-    if (!out[a.code]) out[a.code] = Object.assign({ cost: 0 }, a);
+    if (!out[a.code]) out[a.code] = Object.assign({ cost: 0, blocks: {} }, a);
     out[a.code].cost += cost;
+    const blk = String(m[3] || '').trim();
+    if (blk) out[a.code].blocks[blk] = (out[a.code].blocks[blk] || 0) + cost;
   });
   return Object.keys(out).map(k => out[k]).sort((a, b) => b.cost - a.cost);
 }
@@ -129,6 +135,9 @@ function readUpkeepMonthly(values, display) {
   const full = rows.filter(x => !isPartialMonth(x.p)).sort((a, b) => (a.p.y - b.p.y) || (a.p.m - b.p.m));
   return full.length ? full : null;
 }
+
+/** Kelipatan dari biasanya: "12×", atau "lebih dari 100×" bila sangat besar (hampir pasti salah input). */
+function timesText(r) { return r > 100 ? 'lebih dari 100×' : `${fmt(r, 0)}×`; }
 
 function upkeepMedian(arr) {
   const v = arr.filter(x => x !== null && x !== undefined && !isNaN(x)).sort((a, b) => a - b);
@@ -265,7 +274,7 @@ function describeUpkeepMonthly(d) {
   const F = U.fert;
   L.push(`- Pemupukan (biaya kerja aplikasi; harga pupuk belum tentu termasuk) tercatat di ${F.months} dari ${F.of} bulan${F.last ? ` (terakhir ${monthLong(F.last)}${F.monthsSince ? `, ${F.monthsSince} bulan sebelum bulan laporan` : ', bulan laporan'})` : ''}` +
     `${F.rp ? `, total ${rp(F.rp)}${F.rpHaYear ? ` ≈ ${rp(F.rpHaYear)}/ha/tahun` : ''}` : ''}; acuan umum 2–3 kali aplikasi per tahun.`);
-  U.spikes.slice(0, 4).forEach(s => L.push(`PERLU DICEK: biaya ${s.name} ${monthLong(s.p)} ${rp(s.cost)}, ${fmt(s.ratio, 0)}× median bulan lain (${rp(s.median)}); kemungkinan salah input jumlah atau satuan, atau pekerjaan besar sekali jalan.`));
+  U.spikes.slice(0, 4).forEach(s => L.push(`PERLU DICEK: biaya ${s.name} ${monthLong(s.p)} ${rp(s.cost)}, ${timesText(s.ratio)} median bulan lain (${rp(s.median)}); kemungkinan salah input jumlah atau satuan, atau pekerjaan besar sekali jalan.`));
   U.monthSpikes.filter(m => !U.spikes.some(s => mkey(s.p) === mkey(m.p)) || (m.perHa && m.perHa > DECK_CONFIG.THRESHOLDS.UPKEEP_MAX_RP_HA_MONTH)).slice(0, 2).forEach(m => L.push(`PERLU DICEK: total upkeep ${monthLong(m.p)} ${rp(m.total)}` +
     `${m.perHa ? ` (${rp(m.perHa)}/ha, tidak wajar untuk satu bulan)` : ''}${m.median ? `; median bulan lain ${rp(m.median)}` : ''}; kemungkinan salah input.`));
   if (U.tinyItems.length) L.push(`PERLU DICEK: biaya ${U.tinyItems.slice(0, 3).map(x => `${x.name} ${monthShort(x.p)} Rp${fmt(x.cost, 0)}`).join(', ')} terlalu kecil untuk satu pekerjaan sebulan; kemungkinan yang diisi jumlah/satuan, bukan rupiah.`);
@@ -295,4 +304,51 @@ function upkeepItemsMonthly(d) {
   const m = U && (U.cur || U.months[U.months.length - 1]);
   if (!m || !m.items) return [];
   return m.items.map(it => ({ name: it.name, code: it.code, cat: it.cat, value: it.cost, pct: m.total ? (it.cost / m.total) * 100 : 0 }));
+}
+
+/**
+ * Biaya perawatan PER BLOK (format upkeep "KODE; biaya; blok"): total periode, Rp/ha per bulan, pekerjaan terbesar,
+ * dibandingkan dengan hasil blok (capaian janjang vs standar Marihat). Bulan dengan upkeep tidak wajar tidak dihitung.
+ * Tidak ada nama blok di catatan upkeep = data tidak tersedia -> null.
+ * -> {rows:[{name, ha, cost, perHaMonth, top, share, ach, tonHa}], months, total, unassigned, highLow:[...]}
+ */
+function buildUpkeepByBlock(d) {
+  const U = d.upkeepAnalysis;
+  if (!U || !U.months.length) return null;
+  const ok = U.months.filter(m => U.absurd.indexOf(m) < 0);
+  const map = {}, norm2 = s => String(s || '').trim().toLowerCase();
+  let total = 0, assigned = 0;
+  ok.forEach(m => m.items.forEach(it => {
+    total += it.cost;
+    Object.keys(it.blocks || {}).forEach(bn => {
+      const k = norm2(bn), v = it.blocks[bn];
+      if (!map[k]) map[k] = { name: bn, cost: 0, byJob: {} };
+      map[k].cost += v; assigned += v;
+      map[k].byJob[it.name] = (map[k].byJob[it.name] || 0) + v;
+    });
+  }));
+  const keys = Object.keys(map);
+  if (!keys.length) return null;
+  const prod = (d.blockProd && d.blockProd.rows) || [], blocks = (d.blocks && d.blocks.blocks) || [];
+  const rows = keys.map(k => {
+    const b = map[k], pr = prod.find(r => norm2(r.name) === k), bl = blocks.find(x => norm2(x.name) === k);
+    const ha = (pr && pr.ha) || (bl && bl.ha) || null;
+    const jobs = Object.keys(b.byJob).sort((x, y) => b.byJob[y] - b.byJob[x]);
+    return { name: b.name, ha, cost: b.cost, perHaMonth: ha ? b.cost / ha / ok.length : null, top: jobs[0], topShare: (b.byJob[jobs[0]] / b.cost) * 100,
+             ach: pr ? pr.ach : null, tonHa: pr ? pr.tonHaRec : null };
+  }).sort((a, b) => (b.perHaMonth || 0) - (a.perHaMonth || 0) || b.cost - a.cost);
+  // Biaya per ha di atas median tetapi capaian janjang di bawah ambang: biaya belum diikuti hasil
+  const med = upkeepMedian(rows.map(r => r.perHaMonth).filter(v => v));
+  const highLow = rows.filter(r => r.perHaMonth && med && r.perHaMonth > med && r.ach !== null && r.ach < DECK_CONFIG.THRESHOLDS.BLOCK_LOW_ACH);
+  return { rows, months: ok.length, total, assigned, unassigned: Math.max(0, total - assigned), medianPerHa: med, highLow };
+}
+
+function describeUpkeepByBlock(d) {
+  const B = d.upkeepByBlock;
+  if (!B) return '';
+  const pct = v => (v === null || v === undefined ? '-' : `${fmt(v * 100, 0)}%`);
+  const L = [`BIAYA PERAWATAN PER BLOK (${B.months} bulan; ${fmtRp(B.assigned)} tercatat per blok${B.unassigned > B.total * 0.05 ? `, ${fmtRp(B.unassigned)} tanpa nama blok` : ''}; median ${fmtRp(B.medianPerHa)}/ha/bulan):`];
+  L.push(`- blok dengan biaya per ha tertinggi: ${B.rows.slice(0, 6).map(r => `${r.name} ${r.perHaMonth ? `${fmtRp(r.perHaMonth)}/ha/bln` : fmtRp(r.cost)} (terbesar ${r.top.toLowerCase()}; capaian janjang ${pct(r.ach)})`).join('; ')}.`);
+  if (B.highLow.length) L.push(`PERLU DICEK: ${B.highLow.length} blok berbiaya perawatan di atas median tetapi janjangnya di bawah ${fmt(DECK_CONFIG.THRESHOLDS.BLOCK_LOW_ACH * 100, 0)}% standar (mis. ${B.highLow.slice(0, 3).map(r => r.name).join(', ')}); cek jenis pekerjaan dan hasilnya di blok itu.`);
+  return L.join('\n');
 }

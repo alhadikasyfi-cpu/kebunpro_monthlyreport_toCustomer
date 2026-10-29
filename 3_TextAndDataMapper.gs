@@ -430,6 +430,7 @@ function getSheetData(sheet) {
   d.sphAssumed = !parseNum(d.sphRaw);
   // Jenis tanah per blok (file 9)
   d.soil = buildSoilAnalytics(d);
+  if (d.soil && !(d.soil.knownPct > 0)) d.soil = null;   // jenis tanah tidak dicatat sama sekali = data tidak tersedia, tidak dianalisis
   // Tonase = berat janjang TERJUAL: BJR sebenarnya = tonase ÷ janjang terjual (kumulatif), dan
   // produksi panen diestimasi = janjang dipanen × BJR tersebut (untuk dibandingkan dengan standar Marihat).
   d.bjrSoldCum = null; d.bjrSoldMonthly = []; d.produksiPanen = null;
@@ -459,6 +460,7 @@ function getSheetData(sheet) {
   d.npk = d.fertilizer;
   d.blockProd = buildBlockProduction(d);   // produksi per blok (file 10), bukti untuk status pupuk
   d.upkeepAnalysis = buildUpkeepAnalysis(d);   // biaya perawatan per bulan (file 11), juga bukti pemupukan
+  d.upkeepByBlock = buildUpkeepByBlock(d);    // biaya perawatan per blok vs hasil blok (format upkeep "KODE; biaya; blok")
   d.fertStatus = buildFertilizerStatus(d);
   d.flow = buildFlow(d);
   d.rkh = buildRkh(d);
@@ -490,16 +492,23 @@ function getSheetData(sheet) {
  * Bagian ke-4 (jenis tanah) dan ke-5 (janjang DIPANEN di blok itu pada bulan itu) opsional;
  * "-" atau kosong = belum tercatat. Tahun 0 = belum tercatat. Janjang kosong = belum tercatat (bukan nol).
  */
+/**
+ * Isian blok: "nama, luas ha, tahun tanam, jenis tanah, janjang dipanen, tonase" dipisah ";".
+ * Bagian janjang dan tonase opsional; tonase ditandai akhiran "ton" (mis. "19.38ton"), sehingga isian tanpa janjang
+ * ("NEW BP2, 6.33 ha, 2025, Mineral, 0.15ton") tetap terbaca benar. -> [{name, ha, year, soil, jjg, ton}]
+ */
 function parseBlocks(text) {
   return String(text || '').split(';').map(t => t.trim()).filter(Boolean).map(t => {
     const m = t.match(/^(.*?),\s*([\d.,]+)\s*ha\s*,\s*(\d{1,4})\s*(?:,\s*(.*?))?\s*$/i);
     if (!m) return null;
     const year = Number(m[3]);
-    let soil = String(m[4] || '').trim(), jjg = null;
-    const j = soil.match(/^(.*?)\s*,\s*([\d.]+)\s*$/);           // "-, 342" | "Gambut, 1084"
-    if (j) { soil = j[1].trim(); jjg = parseNum(j[2]); }
+    const rest = String(m[4] || '').split(',').map(x => x.trim()).filter(x => x !== '');
+    let ton = null, jjg = null;
+    if (rest.length && /^[\d.]+\s*ton$/i.test(rest[rest.length - 1])) ton = Number(rest.pop().replace(/\s*ton$/i, ''));
+    if (rest.length > 1 && /^[\d.]+$/.test(rest[rest.length - 1])) jjg = parseNum(rest.pop());   // "-, 342" | "Gambut, 1084"
+    const soil = rest.join(', ');
     return { name: m[1].trim(), ha: parseNum(m[2]) || 0, year: year >= 1950 ? year : null,
-             soil: soil && !/^[-–—]+$/.test(soil) ? soil : null, jjg };
+             soil: soil && !/^[-–—]+$/.test(soil) ? soil : null, jjg, ton: ton !== null && isFinite(ton) ? ton : null };
   }).filter(Boolean);
 }
 
@@ -523,7 +532,11 @@ function buildBlockAnalytics(d) {
     list.forEach(b => {
       if (fullMonth && (b.jjg === null || b.jjg === undefined)) b.jjg = 0;
       const key = `${b.name}|${b.ha}|${b.year}`;
-      if (!uniq[key]) uniq[key] = { name: b.name, ha: b.ha, year: b.year, soil: null, months: 0, jjgSum: 0, jjgMonths: 0, jjgRec: 0, jjgByMonth: {}, firstP: row.p };
+      if (!uniq[key]) uniq[key] = { name: b.name, ha: b.ha, year: b.year, soil: null, months: 0, jjgSum: 0, jjgMonths: 0, jjgRec: 0, jjgByMonth: {}, firstP: row.p,
+                                    tonSum: 0, tonRec: 0, tonByMonth: {} };
+      if (b.ton !== null && b.ton !== undefined) {   // tonase per blok (bagian ke-6, mis. "19.38ton")
+        uniq[key].tonSum += b.ton; uniq[key].tonRec++; uniq[key].tonByMonth[mkey(row.p)] = (uniq[key].tonByMonth[mkey(row.p)] || 0) + b.ton;
+      }
       uniq[key].months++;
       if (b.soil) uniq[key].soil = b.soil;   // jenis tanah: isian terakhir yang tercatat
       if (b.jjg !== null && b.jjg !== undefined) {   // janjang dipanen per blok (bagian ke-5)
@@ -570,7 +583,7 @@ function buildBlockAnalytics(d) {
 
 function describeBlocks(d) {
   const B = d.blocks;
-  if (!B) return 'Data blok: ANOMALI: belum tersedia.';
+  if (!B) return '';
   const L = [B.totalHa
     ? `Blok dipanen (${B.blocks.length} blok unik, total ${fmt(B.totalHa, 1)} ha; umur dihitung per tahun ${B.refYear}):`
     : `Blok dipanen (${B.blocks.length} blok unik; LUAS BLOK BELUM TERCATAT, semua blok 0 ha — JANGAN menulis angka luas kebun dalam ha; umur dihitung per tahun ${B.refYear}):`];
@@ -662,7 +675,7 @@ function parseMandorTable(t) {
 }
 
 function describeMandor(role, m, d) {
-  if (!m) return `Mandor ${role}: ANOMALI: data belum tersedia.`;
+  if (!m) return '';
   const L = [`Mandor ${role} (kolom: ${m.periods.map(p => p.label + (p.partial ? ' = bulan berjalan, belum lengkap' : '')).join(' | ')}):`];
   m.rows.forEach(r => {
     const parts = r.vals.map((v, i) => `${m.periods[i].label}: ${v ? `${fmt(v.rate, 2)} JJG/hari × ${fmt(v.days, 0)} hari = ${fmt(v.total, 0)} JJG` : 'kosong'}`);
@@ -732,7 +745,7 @@ function seriesStats(series) {
 
 function describeSeries(name, unit, series, f) {
   const st = seriesStats(series);
-  if (!st) return `${name}: ANOMALI: data belum tersedia.`;
+  if (!st) return `${name}: tidak ada data.`;
   const u = unit ? ` ${unit}` : '';
   const lines = [
     `${name} (${monthLong(series[0].p)} s.d. ${monthLong(series[series.length - 1].p)}):`,
@@ -957,33 +970,33 @@ function parseRkhCell(v) {
 }
 
 /**
- * RKH (Rencana Kerja Harian): fitur KebunPRO untuk merencanakan ancak/blok yang dipanen dan dirawat setiap hari.
- * Tanpa RKH, rotasi panen di lapangan tidak bisa dibandingkan dengan rencananya. Kolom opsional per bulan
- * "RKH count (Created; completed)" berisi "dibuat; selesai". Kolom tidak ada atau semua 0 = belum diisi.
- * -> {filled, coverage (porsi bulan terisi), months, filledMonths, curFilled, monthly, cur:{p, created, completed, done}}
+ * RKH (Rencana Kerja Harian) di aplikasi: kolom per bulan "RKH count (Created; completed)" berisi "dibuat; selesai".
+ * Banyak kebun membuat rencana kerja secara manual di luar aplikasi, jadi RKH HANYA dianalisis bila benar-benar dipakai
+ * (ada RKH dibuat dalam 3 bulan terakhir sampai bulan laporan). Tidak dipakai = null (tanpa temuan dan rekomendasi).
+ * -> {monthly:[{p, created, completed, done}], used, cur:{p, created, completed, done}|null, done, created, completed}
  */
 function buildRkh(d) {
-  const months = (d.yield || []).map(x => x.p);
-  const monthly = (d.rkhRaw || []).map(x => Object.assign({ p: x.p }, parseRkhCell(x.value)));
-  const filledMonths = monthly.filter(x => x.created > 0).map(x => x.p);
-  const n = months.length || monthly.length;
-  const cur = d.reportP ? monthly.find(x => mkey(x.p) === mkey(d.reportP) && x.created > 0) : null;
-  if (cur) cur.done = cur.completed !== null ? cur.completed / cur.created : null;
-  return { filled: filledMonths.length > 0, filledMonths, months: n, monthly,
-           coverage: n ? Math.min(1, filledMonths.length / n) : 0, curFilled: !!cur, cur: cur || null };
+  const monthly = (d.rkhRaw || []).map(x => Object.assign({ p: x.p }, parseRkhCell(x.value)))
+    .map(x => Object.assign(x, { done: x.created > 0 && x.completed !== null ? x.completed / x.created : null }));
+  const rep = d.reportP || (monthly.length ? monthly[monthly.length - 1].p : null);
+  if (!rep) return null;
+  const idx = p => p.y * 12 + p.m, r = idx(rep);
+  const recent = monthly.filter(x => idx(x.p) <= r && idx(x.p) > r - 3 && x.created > 0);
+  if (!recent.length) return null;
+  const used = monthly.filter(x => x.created > 0 && idx(x.p) <= r);
+  const cur = used.find(x => idx(x.p) === r) || null;
+  const created = used.reduce((a, x) => a + x.created, 0), completed = used.reduce((a, x) => a + (x.completed || 0), 0);
+  return { monthly: monthly.filter(x => idx(x.p) <= r), used, cur, created, completed, done: created ? completed / created : null };
 }
 
 function describeRkh(d) {
   const R = d.rkh, T = DECK_CONFIG.THRESHOLDS;
   if (!R) return '';
-  if (!R.filled) return 'PERLU DICEK: RKH (Rencana Kerja Harian) belum diisi, sehingga rencana kerja harian belum bisa dibandingkan dengan rotasi panen yang terjadi di lapangan (acuan rotasi sehat 7–10 hari per ancak).';
-  const per = R.monthly.filter(x => x.created > 0).map(x => `${monthShort(x.p)} ${fmt(x.created, 0)} dibuat${x.completed !== null ? `/${fmt(x.completed, 0)} selesai` : ''}`).join(', ');
-  const c = R.cur, rep = d.reportP ? monthLong(d.reportP) : 'bulan laporan';
-  const L = [`RKH (Rencana Kerja Harian) per bulan (dibuat/selesai): ${per}.`];
-  if (R.coverage < T.RKH_MIN_COVERAGE) L.push(`PERLU DICEK: RKH baru diisi pada ${R.filledMonths.length} dari ${R.months} bulan data${R.curFilled ? '' : `, termasuk belum diisi di ${rep}`}; rotasi panen aktual belum bisa dipantau terhadap rencananya.`);
-  else if (!c) L.push(`PERLU DICEK: RKH ${rep} belum diisi.`);
-  if (c && c.done !== null && c.done < T.RKH_MIN_DONE) L.push(`PERLU DICEK: RKH ${rep} baru selesai ${fmt(c.completed, 0)} dari ${fmt(c.created, 0)} yang dibuat (${fmt(c.done * 100, 0)}%); rencana kerja belum terlaksana penuh, cek ancak yang terlewat dan rotasi panennya.`);
-  else if (c && c.done !== null) L.push(`RKH ${rep}: ${fmt(c.completed, 0)} dari ${fmt(c.created, 0)} selesai (${fmt(c.done * 100, 0)}%).`);
+  const L = [`RKH (Rencana Kerja Harian) di aplikasi, per bulan (dibuat/selesai): ${R.used.map(x => `${monthShort(x.p)} ${fmt(x.created, 0)}/${fmt(x.completed || 0, 0)}`).join(', ')}; ` +
+    `total ${fmt(R.completed, 0)} dari ${fmt(R.created, 0)} selesai (${fmt((R.done || 0) * 100, 0)}%).`];
+  const c = R.cur;
+  if (c && c.done !== null && c.done < T.RKH_MIN_DONE) L.push(`PERLU DICEK: RKH ${monthLong(c.p)} baru selesai ${fmt(c.completed, 0)} dari ${fmt(c.created, 0)} yang dibuat (${fmt(c.done * 100, 0)}%); rencana kerja belum terlaksana penuh, cek ancak yang terlewat dan rotasi panennya.`);
+  else if (c && c.done !== null) L.push(`RKH ${monthLong(c.p)}: ${fmt(c.completed, 0)} dari ${fmt(c.created, 0)} selesai (${fmt(c.done * 100, 0)}%).`);
   return L.join('\n');
 }
 
@@ -1000,7 +1013,7 @@ function describeNoWeight(d) {
   return L.join('\n');
 }
 
-/** Blok tanpa penjualan: berapa bulan setiap blok tidak tercatat menjual janjang. */
+/** Blok yang penjualannya belum tercatat: blok dipanen tetapi penjualannya belum diinput ke aplikasi, berapa bulan per blok. */
 function buildUnsaleAnalytics(d) {
   if (!d.blocksUnsaleRaw.some(x => String(x.value || '').trim())) return null;
   const n = d.blocksUnsaleRaw.length;
@@ -1010,7 +1023,7 @@ function buildUnsaleAnalytics(d) {
     if (!map[k]) map[k] = { name: b.name, ha: b.ha, year: b.year, soil: null, months: 0, last: null, jjg: 0 };
     map[k].months++; map[k].last = row.p;
     if (b.soil) map[k].soil = b.soil;
-    if (b.jjg) map[k].jjg += b.jjg;   // janjang dipanen di blok saat blok itu tidak tercatat menjual
+    if (b.jjg) map[k].jjg += b.jjg;   // janjang dipanen di blok saat penjualan blok itu belum tercatat
   }));
   const blocks = Object.keys(map).map(k => map[k]).sort((a, b) => b.months - a.months || b.ha - a.ha);
   const monthly = d.blocksUnsaleRaw.map(row => {
@@ -1026,12 +1039,12 @@ function buildUnsaleAnalytics(d) {
 
 function describeUnsale(d) {
   const U = d.unsale;
-  if (!U) return 'Blok tanpa penjualan: data belum tersedia.';
-  const L = [`BLOK TANPA PENJUALAN (blok yang DIPANEN tetapi janjangnya tidak dijual atau tidak tercatat sampai terjual): ${U.blocks.length} blok; ${U.chronic.length} blok ≥ ${DECK_CONFIG.THRESHOLDS.UNSALE_MONTHS} bulan.`];
+  if (!U) return '';
+  const L = [`BLOK YANG PENJUALANNYA BELUM TERCATAT (blok yang DIPANEN tetapi penjualannya belum diinput ke aplikasi; bukan blok yang tidak menjual): ${U.blocks.length} blok; ${U.chronic.length} blok ≥ ${DECK_CONFIG.THRESHOLDS.UNSALE_MONTHS} bulan.`];
   L.push(`- per bulan (jumlah blok | ha | % luas blok tercatat): ${U.monthly.map(x => `${x.label} ${x.count} | ${fmt(x.ha, 1)} ha | ${x.share === null ? '-' : fmt(x.share, 0) + '%'}`).join('; ')}`);
-  L.push(`- blok ${U.jjgTotal ? 'dengan janjang dipanen tanpa penjualan tercatat terbanyak' : 'paling sering tanpa penjualan'}: ${U.blocks.slice(0, 8).map(b => `${b.name} ${fmt(b.ha, 2)} ha (tanam ${b.year || '-'}) ${b.months}/${U.months} bln${U.jjgTotal ? `, ${fmt(b.jjg, 0)} jjg` : ''}`).join('; ')}`);
-  if (U.jjgTotal) L.push(`- total janjang dipanen di blok saat blok itu tidak tercatat menjual: ${fmt(U.jjgTotal, 0)} janjang selama periode.`);
-  if (U.chronic.length) L.push(`PERLU DICEK: ${U.chronic.length} blok (${fmt(U.chronic.reduce((a, b) => a + b.ha, 0), 1)} ha) dipanen tetapi tidak tercatat menjual janjang selama ≥ ${DECK_CONFIG.THRESHOLDS.UNSALE_MONTHS} bulan; cek janjang tertinggal/restan di blok itu atau penjualan yang tidak dicatat per blok.`);
+  L.push(`- blok ${U.jjgTotal ? 'dengan janjang dipanen terbanyak saat penjualannya belum tercatat' : 'paling sering penjualannya belum tercatat'}: ${U.blocks.slice(0, 8).map(b => `${b.name} ${fmt(b.ha, 2)} ha (tanam ${b.year || '-'}) ${b.months}/${U.months} bln${U.jjgTotal ? `, ${fmt(b.jjg, 0)} jjg` : ''}`).join('; ')}`);
+  if (U.jjgTotal) L.push(`- total janjang dipanen di blok saat penjualan blok itu belum tercatat: ${fmt(U.jjgTotal, 0)} janjang selama periode.`);
+  if (U.chronic.length) L.push(`PERLU DICEK: ${U.chronic.length} blok (${fmt(U.chronic.reduce((a, b) => a + b.ha, 0), 1)} ha) dipanen tetapi penjualannya belum tercatat di aplikasi selama ≥ ${DECK_CONFIG.THRESHOLDS.UNSALE_MONTHS} bulan; input blok asal pada setiap trip penjualan.`);
   return L.join('\n');
 }
 
