@@ -116,6 +116,7 @@ const DECK_CONFIG = {
     MUAT_VS_PANEN: 0.7,         // JJG dimuat < 70% JJG dipanen -> risiko restan (dari tabel mandor)
     FLOW_LOSS_PCT: 5,           // janjang belum tercatat antar-tahap > 5% -> alur panen ke muat tidak tercatat
     RKH_MIN_COVERAGE: 0.8,      // RKH (Rencana Kerja Harian) terisi < 80% bulan data -> temuan + rekomendasi R26
+    RKH_MIN_DONE: 0.8,          // RKH selesai < 80% dari yang dibuat (bulan laporan) -> temuan + R26
     FLOW_EXCESS_PCT: 2,         // tahap berikut > tahap sebelumnya lebih dari 2% (kumulatif) -> pencatatan tidak konsisten
     REPLANT_AGE: 25,            // umur > 25 tahun -> kandidat peremajaan
     NOWEIGHT_PCT: 5,            // data penjualan (berat) belum diinput untuk > 5% janjang yang keluar kebun -> PERLU DICEK
@@ -291,8 +292,9 @@ const DECK_CONFIG = {
     FLOW_TRIP: ['jjg masuk trip', 'janjang masuk trip', 'jjg delivery'],
     FLOW_SOLD: ['jjg terjual', 'janjang terjual'],                       // terjual DENGAN berat (= total_sale_jjg)
     FLOW_SOLD_NOWEIGHT: ['jjg terjual tanpa berat', 'janjang terjual tanpa berat'],   // = data penjualan (berat) belum diinput
-    // Opsional: jumlah RKH (Rencana Kerja Harian) yang diisi per bulan. Kolom tidak ada / 0 = RKH belum diisi.
-    RKH: ['rkh_count', 'total_rkh', 'jumlah rkh', 'rkh dibuat', 'rkh', 'rencana kerja harian'],
+    // Opsional, kolom di tabel bulanan utama: RKH (Rencana Kerja Harian) per bulan, isi "dibuat; selesai", mis. "45; 30".
+    // Header "RKH count (Created; completed)". Kolom tidak ada / kosong / 0 = RKH belum diisi.
+    RKH: ['rkh count (created; completed)', 'rkh count', 'rkh_count', 'jumlah rkh', 'rkh'],
     // Opsional: tanggal admin terakhir input data mandor (acuan "Bulan Ini"); bila tidak ada, dipakai tanggal script dijalankan
     INPUT_DATE_LABEL: ['Tanggal Input', 'Tanggal Update', 'Update'],
     // Tabel "Biaya Pekerja per Kg atau Ha TBS"

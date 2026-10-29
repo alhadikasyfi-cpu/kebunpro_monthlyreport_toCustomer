@@ -256,7 +256,7 @@ function getSheetData(sheet) {
     flowTrip: readMonthly(values, H.FLOW_TRIP),
     flowSold: readMonthly(values, H.FLOW_SOLD),
     flowSoldNoWeight: readMonthly(values, H.FLOW_SOLD_NOWEIGHT),
-    rkhRaw: readMonthly(values, H.RKH || []),
+    rkhRaw: readMonthly(values, H.RKH || [], true),
     inputDateRaw: valueRightOf(display, H.INPUT_DATE_LABEL, ''),
     revKg: readMonthly(values, H.REV_KG),
     upahKg: readMonthly(values, H.UPAH_KG),
@@ -949,26 +949,42 @@ function buildNoWeightAnalytics(d) {
            series: monthly.map(x => ({ p: x.p, label: x.label, value: x.share })) };
 }
 
+/** Isi sel RKH "dibuat; selesai" (mis. "45; 30") -> {created, completed}; angka tunggal = dibuat saja. */
+function parseRkhCell(v) {
+  const parts = String(v === null || v === undefined ? '' : v).split(/[;|/]/).map(x => parseNum(x.trim()));
+  const created = parts[0] || 0, completed = parts.length > 1 && parts[1] !== null ? parts[1] : null;
+  return { created, completed };
+}
+
 /**
  * RKH (Rencana Kerja Harian): fitur KebunPRO untuk merencanakan ancak/blok yang dipanen dan dirawat setiap hari.
- * Tanpa RKH, rotasi panen di lapangan tidak bisa dibandingkan dengan rencananya. Kolom opsional (jumlah RKH per bulan);
- * kolom tidak ada atau semua 0 = belum diisi. -> {filled, coverage (porsi bulan terisi), months, filledMonths, curFilled}
+ * Tanpa RKH, rotasi panen di lapangan tidak bisa dibandingkan dengan rencananya. Kolom opsional per bulan
+ * "RKH count (Created; completed)" berisi "dibuat; selesai". Kolom tidak ada atau semua 0 = belum diisi.
+ * -> {filled, coverage (porsi bulan terisi), months, filledMonths, curFilled, monthly, cur:{p, created, completed, done}}
  */
 function buildRkh(d) {
   const months = (d.yield || []).map(x => x.p);
-  const filledMonths = (d.rkhRaw || []).filter(x => x.value > 0).map(x => x.p);
-  const n = months.length || (d.rkhRaw || []).length;
-  return { filled: filledMonths.length > 0, filledMonths, months: n,
-           coverage: n ? Math.min(1, filledMonths.length / n) : 0,
-           curFilled: !!(d.reportP && filledMonths.some(p => mkey(p) === mkey(d.reportP))) };
+  const monthly = (d.rkhRaw || []).map(x => Object.assign({ p: x.p }, parseRkhCell(x.value)));
+  const filledMonths = monthly.filter(x => x.created > 0).map(x => x.p);
+  const n = months.length || monthly.length;
+  const cur = d.reportP ? monthly.find(x => mkey(x.p) === mkey(d.reportP) && x.created > 0) : null;
+  if (cur) cur.done = cur.completed !== null ? cur.completed / cur.created : null;
+  return { filled: filledMonths.length > 0, filledMonths, months: n, monthly,
+           coverage: n ? Math.min(1, filledMonths.length / n) : 0, curFilled: !!cur, cur: cur || null };
 }
 
 function describeRkh(d) {
-  const R = d.rkh;
+  const R = d.rkh, T = DECK_CONFIG.THRESHOLDS;
   if (!R) return '';
   if (!R.filled) return 'PERLU DICEK: RKH (Rencana Kerja Harian) belum diisi, sehingga rencana kerja harian belum bisa dibandingkan dengan rotasi panen yang terjadi di lapangan (acuan rotasi sehat 7–10 hari per ancak).';
-  if (R.coverage < DECK_CONFIG.THRESHOLDS.RKH_MIN_COVERAGE) return `PERLU DICEK: RKH (Rencana Kerja Harian) baru diisi pada ${R.filledMonths.length} dari ${R.months} bulan data${R.curFilled ? '' : ', termasuk belum diisi di bulan laporan'}; rotasi panen aktual belum bisa dipantau terhadap rencananya.`;
-  return `RKH (Rencana Kerja Harian) terisi ${R.filledMonths.length} dari ${R.months} bulan data; dapat dipakai untuk memantau rotasi panen terhadap rencana.`;
+  const per = R.monthly.filter(x => x.created > 0).map(x => `${monthShort(x.p)} ${fmt(x.created, 0)} dibuat${x.completed !== null ? `/${fmt(x.completed, 0)} selesai` : ''}`).join(', ');
+  const c = R.cur, rep = d.reportP ? monthLong(d.reportP) : 'bulan laporan';
+  const L = [`RKH (Rencana Kerja Harian) per bulan (dibuat/selesai): ${per}.`];
+  if (R.coverage < T.RKH_MIN_COVERAGE) L.push(`PERLU DICEK: RKH baru diisi pada ${R.filledMonths.length} dari ${R.months} bulan data${R.curFilled ? '' : `, termasuk belum diisi di ${rep}`}; rotasi panen aktual belum bisa dipantau terhadap rencananya.`);
+  else if (!c) L.push(`PERLU DICEK: RKH ${rep} belum diisi.`);
+  if (c && c.done !== null && c.done < T.RKH_MIN_DONE) L.push(`PERLU DICEK: RKH ${rep} baru selesai ${fmt(c.completed, 0)} dari ${fmt(c.created, 0)} yang dibuat (${fmt(c.done * 100, 0)}%); rencana kerja belum terlaksana penuh, cek ancak yang terlewat dan rotasi panennya.`);
+  else if (c && c.done !== null) L.push(`RKH ${rep}: ${fmt(c.completed, 0)} dari ${fmt(c.created, 0)} selesai (${fmt(c.done * 100, 0)}%).`);
+  return L.join('\n');
 }
 
 function describeNoWeight(d) {

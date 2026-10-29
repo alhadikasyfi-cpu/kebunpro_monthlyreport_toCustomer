@@ -15,6 +15,12 @@
  * jadi nilai Rp memakai BJR rata-rata kebun (estimasi).
  */
 
+/** Catatan singkat untuk kolom tabel slide (satu–dua baris). */
+const BLOK_CATATAN_SINGKAT = {
+  hara: 'Prioritas uji daun & tanah', rotasi: 'Cek rotasi panen', tua: 'Kandidat peremajaan',
+  baik: 'Sesuai standar', pantau: 'Pantau (data pendek)', cek: 'Cek luas/nama blok'
+};
+
 const BLOK_CATATAN = {
   hara: 'rutin dipanen, janjang rendah: prioritas uji daun & tanah',
   rotasi: 'panen tidak teratur: cek rotasi panen',
@@ -141,6 +147,8 @@ function describeBlockProduction(d) {
 function blockProdTableRows(d) {
   const P = d.blockProd;
   if (!P || !P.priority.length) return null;
-  return P.priority.slice(0, 8).map(r => [r.name, String(r.age), fmt(r.ha, 1), `${fmt(r.jjgHa, 0)} / ${fmt(r.std.jjgHa, 0)}`,
-    `${fmt(r.ach * 100, 0)}%`, blockNote(r)]);
+  const T = DECK_CONFIG.THRESHOLDS;
+  const note = r => (r.cat === 'baik' && r.ach < 1 ? 'Di bawah standar' : BLOK_CATATAN_SINGKAT[r.cat] || '-') +
+    (r.ach !== null && r.ach < T.BLOCK_VERY_LOW_ACH && r.cat !== 'cek' ? '; cek luas' : '');
+  return P.priority.slice(0, 8).map(r => [r.name, String(r.age), fmt(r.ha, 1), fmt(r.jjgHa, 0), fmt(r.std.jjgHa, 0), `${fmt(r.ach * 100, 0)}%`, note(r)]);
 }

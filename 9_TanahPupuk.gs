@@ -387,15 +387,15 @@ function buildFertilizerStatus(d) {
   // 1. Hasil vs standar Marihat untuk umur yang sama (kurang hara adalah salah satu penyebab umum hasil rendah)
   if (M) {
     ev.push({ indikator: 'Produktivitas', kebun: `${fmt(M.realTonHa, 1)} ton/ha/th`, acuan: `${fmt(M.pot.ton, 1)} (Marihat ${M.cls})`,
-      arti: (M.achTon < 0.8 ? `${pct(M.achTon)} dari potensi; kurang hara salah satu penyebab umum` : `${pct(M.achTon)} dari potensi`) +
-        (shortM ? `; baru ${M.nMonths} bulan data, masih indikatif` : ''),
+      arti: (M.achTon < 0.8 ? `${pct(M.achTon)} dari potensi; bisa karena kurang hara` : `${pct(M.achTon)} dari potensi`) +
+        (shortM ? `; data ${M.nMonths} bulan, indikatif` : ''),
       arah: M.achTon < 0.8 && !shortM ? 'kurang' : 'netral' });
     if (M.achBjr) ev.push({ indikator: 'BJR', kebun: `${fmt(M.realBjr, 1)} kg`, acuan: `${fmt(M.pot.rbt, 1)} kg`,
-      arti: (M.achBjr < 0.85 ? 'tandan ringan; sering terkait kurang K dan Mg' : 'berat tandan wajar') +
-        (!bjrOk ? (shortM ? `; baru ${M.nMonths} bulan data` : `; hanya dari ${fmt(100 - nwShare, 0)}% janjang yang ditimbang`) + ', masih indikatif' : ''),
+      arti: (M.achBjr < 0.85 ? 'tandan ringan; terkait K dan Mg' : 'berat tandan wajar') +
+        (!bjrOk ? (shortM ? `; data ${M.nMonths} bulan` : `; dari ${fmt(100 - nwShare, 0)}% janjang ditimbang`) + ', indikatif' : ''),
       arah: M.achBjr < 0.85 && bjrOk ? 'kurang' : 'netral' });
     if (M.achJjg) ev.push({ indikator: 'Janjang per ha', kebun: `${fmt(M.realJjgHa, 0)}/tahun`, acuan: `${fmt(M.pot.jjgHa, 0)}/tahun`,
-      arti: (M.achJjg < 0.8 ? 'tandan sedikit; terkait N dan K (juga rotasi panen)' : 'jumlah tandan wajar') + (shortM ? '; masih indikatif' : ''),
+      arti: (M.achJjg < 0.8 ? 'tandan sedikit; terkait N, K, dan rotasi panen' : 'jumlah tandan wajar') + (shortM ? '; indikatif' : ''),
       arah: M.achJjg < 0.8 && !shortM ? 'kurang' : 'netral' });
   }
   // 2. Dosis NPK aktual vs prediksi (bila diisi di sheet)
@@ -473,5 +473,5 @@ function fertStatusTableRows(d) {
   const F = d.fertStatus;
   if (!F) return null;
   return F.evidence.map(e => [e.indikator, e.kebun, e.acuan, e.arti])
-    .concat([[`Kesimpulan: ${F.label}`, F.priorityBlocks && F.priorityBlocks.length ? `Blok prioritas: ${F.priorityBlocks.slice(0, 3).join(', ')}` : '', '', STATUS_PUPUK_SARAN]]);
+    .concat([['Kesimpulan', F.label, F.priorityBlocks && F.priorityBlocks.length ? `Mulai blok ${F.priorityBlocks.slice(0, 3).join(', ')}` : '-', STATUS_PUPUK_SARAN]]);
 }

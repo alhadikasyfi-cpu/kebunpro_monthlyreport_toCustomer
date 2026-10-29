@@ -427,33 +427,19 @@ function computeOwnerKpis(data) {
 /**
  * KINERJA BULAN INI (slide 3): empat pilar yang ditanyakan owner setiap bulan, masing-masing satu angka utama dan
  * satu angka pendukung, selalu dengan pembanding:
- *   PANEN (berapa janjang dipanen, seberapa berat) · PENJUALAN & PENDAPATAN (berapa uang masuk, berapa ton terjual)
+ *   PANEN (berapa ton TBS, seberapa berat tandannya) · PENJUALAN & PENDAPATAN (berapa uang masuk, di harga berapa)
  *   PERAWATAN (berapa biaya perawatan, untuk pekerjaan apa) · PRODUKTIVITAS (hasil per ha, dibanding standar umurnya)
- * slots: tiap slot = daftar KPI alternatif; dipakai yang pertama datanya ada dan belum tampil di pilar lain.
+ * slots: tiap slot = daftar KPI alternatif; dipakai yang pertama datanya ada.
  */
 const PILLARS = [
-  { key: 'panen', title: 'Panen', slots: [['panen_jjg', 'produksi_total'], ['bjr_rata2', 'luas_panen']] },
-  { key: 'jual', title: 'Penjualan & Pendapatan', slots: [['pendapatan_bulan_terakhir', 'produksi_total'], ['produksi_total', 'harga_jual']] },
-  { key: 'rawat', title: 'Perawatan', slots: [['biaya_perawatan'], ['perawatan_terbesar', 'perawatan_per_ha']] },
-  { key: 'produktivitas', title: 'Produktivitas', slots: [['yield_rata2'], ['pencapaian_marihat', 'jjg_ha']] }
+  { key: 'panen', title: 'Panen', slots: [['produksi_total'], ['bjr_rata2']] },
+  { key: 'jual', title: 'Penjualan & Pendapatan', slots: [['pendapatan_bulan_terakhir'], ['harga_jual']] },
+  { key: 'rawat', title: 'Perawatan', slots: [['biaya_perawatan'], ['perawatan_terbesar']] },
+  { key: 'produktivitas', title: 'Produktivitas', slots: [['yield_rata2'], ['pencapaian_marihat']] }
 ];
 
 /** KPI tambahan untuk pilar (KPI lain memakai OWNER_KPIS). */
 const PILLAR_KPIS = {
-  panen_jjg: d => {
-    const src = (d.flowPanen || []).some(x => x.value) ? d.flowPanen : (d.totalJjg || []);
-    const s = seriesStats(kpiSeries(d, src.filter(x => x.value > 0)));
-    if (!s) return null;
-    const k = { name: `Janjang dipanen ${monthShort(s.last.p)}`, value: fmt(s.last.value, 0), unit: 'jjg' };
-    if (s.prev) { const p = kpiDelta(s.last.value, s.prev.value); return Object.assign(k, { note: `${arrowPct(p)} vs ${monthShort(s.prev.p)} (${fmt(s.prev.value, 0)} jjg)`, tone: toneOf(p, true) }); }
-    return Object.assign(k, { note: 'Belum ada bulan pembanding', tone: 'neutral' });
-  },
-  luas_panen: d => {
-    const s = seriesStats(kpiSeries(d, d.luasPanen));
-    if (!s) return null;
-    const k = { name: `Luas dipanen ${monthShort(s.last.p)}`, value: fmt(s.last.value, 0), unit: 'ha' };
-    return Object.assign(k, s.n > 1 ? { note: `Rata-rata ${s.n} bulan ${fmt(s.avg, 0)} ha`, tone: 'neutral' } : { note: 'Belum ada bulan pembanding', tone: 'neutral' });
-  },
   harga_jual: d => {
     const s = seriesStats(d.hargaJual && d.hargaJual.length ? d.hargaJual : d.revKg);
     if (!s) return null;
@@ -468,60 +454,54 @@ const PILLAR_KPIS = {
       note: `Tercatat ${fmtRpShort(U.cur.total)}, tidak wajar; cek input`, tone: 'bad' };
     if (U && U.cur) {
       const r = rpParts(U.cur.total), k = { name: `Biaya perawatan ${monthShort(U.cur.p)}`, value: r.value, unit: r.unit };
-      if (U.avgPrev) { const p = kpiDelta(U.cur.total, U.avgPrev); return Object.assign(k, { note: `${arrowPct(p)} vs biasanya (${fmtRpShort(U.avgPrev)}/bln)`, tone: toneOf(p, false) }); }
+      if (U.avgPrev) { const p = kpiDelta(U.cur.total, U.avgPrev); return Object.assign(k, { note: `${arrowPct(p)} vs biasanya (${fmtRpShort(U.avgPrev)}/bulan)`, tone: toneOf(p, false) }); }
       return Object.assign(k, { note: 'Belum ada bulan pembanding', tone: 'neutral' });
     }
     const s = seriesStats(kpiSeries(d, (d.costUpkeep || []).filter(x => x.value > 0)));   // 0 = belum dicatat, bukan biaya nol
     if (!s) return null;
     const r = rpParts(s.last.value), k = { name: `Biaya perawatan ${monthShort(s.last.p)}`, value: r.value, unit: r.unit };
-    if (s.n > 1) { const p = kpiDelta(s.last.value, s.avg); return Object.assign(k, { note: `${arrowPct(p)} vs rata-rata ${s.n} bulan (${fmtRpShort(s.avg)})`, tone: toneOf(p, false) }); }
+    if (s.prev) { const p = kpiDelta(s.last.value, s.prev.value); return Object.assign(k, { note: `${arrowPct(p)} vs ${monthShort(s.prev.p)} (${fmtRpShort(s.prev.value)})`, tone: toneOf(p, false) }); }
     return Object.assign(k, { note: 'Belum ada bulan pembanding', tone: 'neutral' });
   },
   perawatan_terbesar: d => {
     const U = d.upkeepAnalysis, t = U && U.cur && !U.curAbsurd && U.top && U.top[0];
     if (!t || !t.cost) return null;
     const r = rpParts(t.cost);
-    return { name: t.name, value: r.value, unit: r.unit, tone: t.spike ? 'bad' : 'neutral',
-             note: `Pekerjaan terbesar, ${fmt(t.share, 0)}% biaya perawatan${t.spike && t.avg ? ` · ${fmt(t.cost / t.avg, 0)}× biasanya, perlu dicek` : t.avg ? ` · biasanya ${fmtRpShort(t.avg)}` : t.isNew ? ' · baru bulan ini' : ''}` };
-  },
-  perawatan_per_ha: d => {
-    const U = d.upkeepAnalysis, s = U && U.perHa ? seriesStats(U.perHa) : null;
-    if (!s) return null;
-    const small = s.last.value < 1e5;
-    const k = { name: `Perawatan per ha ${monthShort(s.last.p)}`, value: small ? fmt(s.last.value, 0) : fmt(s.last.value / 1000, 0), unit: small ? 'Rp/ha' : 'ribu Rp/ha' };
-    if (s.n > 1) { const p = kpiDelta(s.last.value, s.avg); return Object.assign(k, { note: `${arrowPct(p)} vs rata-rata ${s.n} bulan`, tone: toneOf(p, false) }); }
-    return Object.assign(k, { note: 'Belum ada bulan pembanding', tone: 'neutral' });
-  },
-  jjg_ha: d => {
-    const s = seriesStats(kpiSeries(d, d.jjgHa));
-    if (!s) return null;
-    const k = { name: `Janjang per ha ${monthShort(s.last.p)}`, value: fmt(s.last.value, 1), unit: 'jjg/ha' };
-    if (s.n > 1) { const p = kpiDelta(s.last.value, s.avg); return Object.assign(k, { note: `${arrowPct(p)} vs rata-rata ${s.n} bulan (${fmt(s.avg, 1)})`, tone: toneOf(p, true) }); }
-    return Object.assign(k, { note: 'Belum ada bulan pembanding', tone: 'neutral' });
+    return { name: `Terbesar ${monthShort(U.cur.p)}`, value: r.value, unit: r.unit, tone: t.spike ? 'bad' : 'neutral',
+             note: `${t.name}, ${fmt(t.share, 0)}% biaya perawatan${t.spike && t.avg ? `; ${fmt(t.cost / t.avg, 0)}× biasanya, perlu dicek` : ''}` };
   }
 };
 
-/** Kartu yang angkanya dari bulan sebelum bulan laporan (bulan laporan belum tercatat) diberi keterangan jelas. */
-function markReportMonth(k, data) {
+/** Label kartu pilar: singkat, tanpa bulan (bulan laporan sudah di judul slide). */
+const PILLAR_LABELS = [[/^TBS terjual|^Estimasi produksi/, 'TBS terjual'], [/^Yield/, 'Yield'], [/^BJR/, 'BJR'], [/^Pendapatan/, 'Pendapatan'],
+  [/^Harga jual/, 'Harga jual'], [/^Biaya perawatan/, 'Biaya perawatan'], [/^Terbesar/, 'Pekerjaan terbesar'], [/^Vs standar Marihat/, 'Capaian standar Marihat']];
+
+/**
+ * Kartu KPI -> bentuk kartu pilar: label singkat tanpa bulan; rupiah ditulis "Rp590,1" + "juta"; catatan pembanding
+ * tanpa angka dalam kurung; angka dari bulan sebelum bulan laporan diberi keterangan "Data Sep 26 (Okt 26 belum tercatat)".
+ */
+function pillarCard(k, data) {
   const rep = data.reportP ? monthShort(data.reportP) : null;
   const m = String(k.name || '').match(/([A-Z][a-z]{2} \d{2})$/);
-  if (rep && m && m[1] !== rep) k.note = `${rep} belum tercatat · ${k.note || ''}`.replace(/ · $/, '');
-  return k;
+  const lab = PILLAR_LABELS.find(([re]) => re.test(k.name));
+  let value = String(k.value), unit = k.unit || '';
+  if (/(^| )Rp$/.test(unit) && value !== '–' && value !== '-') { value = `Rp${value}`; unit = unit.replace(/\s*Rp$/, ''); }
+  if (unit === 'kg/janjang') unit = 'kg/jjg';
+  let note = String(k.note || '').replace(/( vs [^(·]*?) \([^)]*\)/g, '$1').replace(/^.*belum tercatat · /, '')
+    .replace(/^Penjualan (\d+)% janjang belum diinput \((±[^)]*) bila lengkap\)/, '$1% penjualan belum diinput; $2 bila lengkap')
+    .replace(/^Dari penjualan yang sudah diinput; (\d+)% janjang belum diinput/, '$1% penjualan belum diinput')
+    .replace(/Penjualan (\d+)% janjang belum diinput/, '$1% penjualan belum diinput')
+    .replace(/^[▲▼] 0% vs /, 'Setara ');
+  const stale = !!(rep && m && m[1] !== rep);   // angka bulan sebelumnya: catatan netral, bukan hijau/merah
+  if (stale) note = `Data ${m[1]}; ${rep.split(' ')[0]} belum tercatat${note && !/Belum ada bulan pembanding/.test(note) ? ` · ${note}` : ''}`;
+  return { name: lab ? lab[1] : String(k.name).replace(/ [A-Z][a-z]{2} \d{2}$/, ''), value, unit, note, tone: stale ? 'neutral' : k.tone || 'neutral' };
 }
 
-/** Empat pilar Kinerja Bulan Ini -> [{key, title, main, sub}] (main/sub = kartu KPI {name, value, unit, note, tone} atau null). */
+/** Empat pilar Kinerja Bulan Ini -> [{key, title, main, sub}] (main/sub = kartu {name, value, unit, note, tone} atau null). */
 function computePillars(data) {
   const get = id => { try { const f = PILLAR_KPIS[id] || OWNER_KPIS[id]; return f ? f(data) || null : null; } catch (e) { return null; } };
-  const used = [];
   return PILLARS.map(pl => {
-    const picks = pl.slots.map(slot => {
-      for (let i = 0; i < slot.length; i++) {
-        if (used.indexOf(slot[i]) >= 0) continue;
-        const k = get(slot[i]);
-        if (k) { used.push(slot[i]); return markReportMonth(k, data); }
-      }
-      return null;
-    });
+    const picks = pl.slots.map(slot => { for (let i = 0; i < slot.length; i++) { const k = get(slot[i]); if (k) return pillarCard(k, data); } return null; });
     return { key: pl.key, title: pl.title, main: picks[0] || { name: 'Belum ada data', value: '-', unit: '', note: 'Data belum tersedia di sheet', tone: 'neutral' }, sub: picks[1] };
   });
 }
@@ -573,14 +553,12 @@ function buildCostStructure(d) {
   const ratio = revenue ? (total / revenue) * 100 : null;
   const co = (d.costOutliers || []).find(x => mkey(x.p) === mkey(p));
   const lst = a => (a.length > 1 ? `${a.slice(0, -1).join(', ')} dan ${a[a.length - 1]}` : a[0] || '');
+  // Keterangan di bawah diagram (angka utama sudah tampil di batang dan legenda)
   const caption = [
-    d.reportP && mkey(d.reportP) !== mkey(p) ? `Biaya pekerja ${monthLong(d.reportP)} belum tercatat atau tidak wajar; struktur memakai ${monthLong(p)}.` : '',
-    missing.length ? `Biaya ${lst(missing.map(r => r.name.toLowerCase()))} ${monthLong(p)} belum diinput (biasanya ${lst(missing.map(r => fmtRpShort(r.ref)))}), jadi total belum lengkap.` : '',
-    revenue !== null && profit !== null ? `Laba kotor ${monthLong(p)} ${fmtRpShort(profit)}: biaya pekerja ${fmt(ratio, 0)}% dari pendapatan (sebelum biaya material).`
-      : `Pendapatan ${monthLong(p)} belum tercatat, sehingga laba kotor belum dapat dihitung.`,
-    cats.length ? `Perawatan terbesar: ${cats.slice(0, 3).map(c => `${c.name.toLowerCase()} ${fmt(c.share, 0)}%`).join(', ')}.` : '',
-    !perKgOk && ton ? 'Rp/kg tidak dihitung karena sebagian besar data penjualan belum diinput.' : '',
-    co ? `Biaya ${monthLong(co.p)} tidak wajar dan perlu dicek.` : ''
+    d.reportP && mkey(d.reportP) !== mkey(p) ? `Biaya pekerja ${monthLong(d.reportP)} belum tercatat atau tidak wajar; slide ini memakai ${monthLong(p)}.` : '',
+    missing.length ? `Biaya ${lst(missing.map(r => r.name.toLowerCase()))} belum diinput, jadi total biaya belum lengkap.` : '',
+    co ? `Biaya ${monthLong(co.p)} tidak wajar dan perlu dicek.` : '',
+    'Biaya pekerja = upah panen, muat, dan perawatan; belum termasuk pupuk dan bahan.'
   ].filter(Boolean).join(' ');
   const rp = v => (v === null || v === undefined ? '-' : fmtRp(v));
   const facts = `STRUKTUR BIAYA ${monthLong(p)} (biaya pekerja = upah panen + muat + perawatan, belum termasuk material; pembanding = rata-rata ${before.length} bulan sebelumnya):\n` +
@@ -611,7 +589,6 @@ function fallbackAgenda(plan) {
     plan.anomTopic ? { title: 'Temuan (Findings)', desc: 'Hal penting bulan ini, termasuk data yang belum diinput', minutes: 15, pages: [plan.anomTopic.page] } : null,
     plan.conclTopic ? { title: 'Actionable Item', desc: 'Tindakan prioritas beserta PIC dan tenggatnya', minutes: 20, pages: [plan.conclTopic.page] } : null,
     plan.costMain ? { title: 'Struktur Biaya', desc: 'Ke mana biaya pekerja dan perawatan bulan ini', minutes: 10, pages: [plan.costMain.page] } : null,
-    { title: 'Terima Kasih', desc: 'Kesepakatan dan jadwal tinjauan berikutnya', minutes: 5, pages: [plan.closingPage] },
     { title: 'Data Pendukung', desc: n ? `Lampiran A1–A${n}: rincian di balik setiap angka` : 'Rincian di balik setiap angka', minutes: 0, pages: [plan.dividerPage] }
   ].filter(Boolean);
   // Sudut pandang penyedia layanan (SawitPRO/KebunPRO) kepada owner pelanggan: apa yang owner dapatkan dan sepakati bersama
@@ -917,15 +894,15 @@ function buildTopics(d) {
   const BR = blockProdTableRows(d);
   if (BR) T.push({
     id: 'blokprod', title: 'Produktivitas per Blok',
-    visual: 'tabel blok prioritas (selisih janjang terbesar dari standar): blok, umur, luas, janjang/ha/tahun realisasi / standar Marihat, capaian %, catatan penyebab (uji daun & tanah / rotasi panen / peremajaan)',
+    visual: 'tabel blok prioritas (selisih janjang terbesar dari standar): blok, umur, luas, janjang/ha/tahun kebun, standar Marihat, capaian %, tindak lanjut (uji daun & tanah / rotasi panen / peremajaan)',
     facts: describeBlockProduction(d),
     fallback: (() => { const P = d.blockProd;
       return `${fmt(P.lowPct, 0)}% luas blok menghasilkan janjang di bawah ${fmt(DECK_CONFIG.THRESHOLDS.BLOCK_LOW_ACH * 100, 0)}% standar umurnya; ` +
         `${P.fertRows.length} blok rutin dipanen tetapi tetap rendah${P.fertRows.length ? ` (mis. ${P.fertRows.slice(0, 2).map(r => r.name).join(', ')})` : ''}, sehingga perlu uji daun dan uji tanah.` +
         (P.gapRpTotal ? ` Potensi yang belum tercapai sekitar ${fmtRp(P.gapRpTotal)} per tahun.` : ''); })(),
-    draw: b => drawTable(b, ['Blok', 'Umur\nth', 'Luas\nha', 'Jjg/ha/th\nrealisasi / standar', 'Capaian', 'Catatan'], BR,
-      { colWidths: [1.4, 0.8, 0.9, 1.9, 1.1, 3.0], fontSize: DECK_CONFIG.TYPE.TABLE_CELL, headerSize: DECK_CONFIG.TYPE.TABLE_HEADER, rowHeight: 25, headerHeight: 36, numCols: [1, 2, 3, 4],
-        cellColor: (r, c, txt) => (c === 4 ? (parseNum(txt) < DECK_CONFIG.THRESHOLDS.BLOCK_LOW_ACH * 100 ? DECK_CONFIG.COLOR.DANGER : null) : null) })
+    draw: b => drawTable(b, ['Blok', 'Umur\ntahun', 'Luas\nha', 'Kebun\njjg/ha/th', 'Standar\njjg/ha/th', 'Capaian', 'Tindak lanjut'], BR,
+      { colWidths: [1.3, 1.0, 1.0, 1.25, 1.35, 1.25, 2.7], fontSize: DECK_CONFIG.TYPE.TABLE_CELL, headerSize: DECK_CONFIG.TYPE.TABLE_HEADER, rowHeight: 24, headerHeight: 36, numCols: [1, 2, 3, 4, 5],
+        cellColor: (r, c, txt) => (c === 5 ? (parseNum(txt) < DECK_CONFIG.THRESHOLDS.BLOCK_LOW_ACH * 100 ? DECK_CONFIG.COLOR.DANGER : null) : null) })
   });
 
   // --- Jenis tanah & kebutuhan pupuk indikatif (file 9) ---
@@ -949,8 +926,8 @@ function buildTopics(d) {
     visual: 'tabel bukti status pemupukan: indikator, angka kebun, acuan, arti (merah = mendukung indikasi kurang/berlebih), ditutup baris kesimpulan dan saran uji daun & uji tanah Dokter Sawit',
     facts: describeFertStatus(d) + '\n' + describeNpk(d) + '\n' + describeFertilizer(d),
     fallback: `${FS.label}: ${FS.reason}. ${STATUS_PUPUK_SARAN} agar dosis pupuk tiap blok tepat.`,
-    draw: b => drawTable(b, ['Indikator', 'Kebun', 'Acuan', 'Arti'], FSR,
-      { colWidths: [1.9, 1.9, 1.8, 3.4], fontSize: DECK_CONFIG.TYPE.TABLE_CELL, headerSize: DECK_CONFIG.TYPE.TABLE_HEADER, rowHeight: 25, headerHeight: 25,
+    draw: b => drawTable(b, ['Indikator', 'Kebun', 'Acuan', 'Artinya'], FSR,
+      { colWidths: [1.8, 2.0, 1.7, 3.5], fontSize: DECK_CONFIG.TYPE.TABLE_CELL, headerSize: DECK_CONFIG.TYPE.TABLE_HEADER, rowHeight: 24, headerHeight: 25, keepLast: true,
         cellColor: (r, c) => { const e = FS.evidence[r - 1];
           if (!e) return c === 3 ? DECK_CONFIG.COLOR.GREEN : null;                       // baris kesimpulan: saran hijau
           return c === 3 && e.arah !== 'netral' ? DECK_CONFIG.COLOR.DANGER : null; } })
@@ -1206,8 +1183,8 @@ function detectAnomalies(topics, data) {
   }
   const missing = checkDataCompleteness(data);
   if (missing.length) push({ page: null, title: 'Kelengkapan data' }, `ANOMALI: data belum tersedia di sheet: ${missing.join(', ')}.`);
-  const rkh = describeRkh(data);
-  if (/PERLU DICEK/.test(rkh)) push(byId('blokprod') || byId('jjg') || { page: null, title: 'Rencana Kerja Harian (RKH)' }, rkh);
+  describeRkh(data).split('\n').filter(l => /PERLU DICEK/.test(l))
+    .forEach(l => push(byId('blokprod') || byId('jjg') || { page: null, title: 'Rencana Kerja Harian (RKH)' }, l));
   if (data.partialMonth) push(null, `${data.partialMonth} bulan berjalan, belum lengkap dan tidak dianalisis.`);
   // Prioritas bisnis: inkonsistensi > rugi > BJR/upah tidak wajar > restan > harga tetap > angka menyimpang > data kosong
   const rank = a => /ANOMALI DATA|TIDAK KONSISTEN/.test(a.text) ? 1 : /NEGATIF/.test(a.text) ? 2

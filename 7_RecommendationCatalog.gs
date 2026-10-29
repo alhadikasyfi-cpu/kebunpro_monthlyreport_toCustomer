@@ -239,11 +239,12 @@ const RECO_CATALOG = [
     action: 'Isi Rencana Kerja Harian (RKH) di KebunPRO setiap hari: ancak/blok yang akan dipanen dan dirawat. Bandingkan dengan panen aktual agar rotasi 7–10 hari per ancak terpantau dan blok yang terlewat terlihat.',
     signals: 'RKH belum diisi atau jarang diisi, sehingga rencana kerja belum bisa dibandingkan dengan rotasi panen di lapangan; produksi atau janjang per blok naik-turun.',
     topics: ['blokprod', 'jjg', 'produksi'],
-    when: d => { const R = d.rkh;
-      if (R && R.filled && R.coverage >= DECK_CONFIG.THRESHOLDS.RKH_MIN_COVERAGE) return null;
+    when: d => { const R = d.rkh, T = DECK_CONFIG.THRESHOLDS;
       const rot = d.blockProd && d.blockProd.rotasiRows && d.blockProd.rotasiRows.length ? `; ${d.blockProd.rotasiRows.length} blok jarang dipanen` : '';
-      return { evidence: (R && R.filled ? `RKH baru diisi ${fmt(R.coverage * 100, 0)}% bulan data` : 'RKH belum diisi') +
-        `, rencana kerja belum bisa dibandingkan dengan rotasi panen aktual${rot}`, priority: 'tinggi' }; } },
+      if (!R || !R.filled) return { evidence: `RKH belum diisi, rencana kerja belum bisa dibandingkan dengan rotasi panen aktual${rot}`, priority: 'tinggi' };
+      if (R.coverage < T.RKH_MIN_COVERAGE || !R.cur) return { evidence: `RKH baru diisi ${R.filledMonths.length} dari ${R.months} bulan data${R.cur ? '' : ', bulan laporan belum diisi'}${rot}`, priority: 'tinggi' };
+      if (R.cur.done !== null && R.cur.done < T.RKH_MIN_DONE) return { evidence: `RKH ${monthShort(R.cur.p)} selesai ${fmt(R.cur.completed, 0)} dari ${fmt(R.cur.created, 0)} (${fmt(R.cur.done * 100, 0)}%)${rot}`, priority: 'sedang' };
+      return null; } },
 
   { code: 'R17', title: 'Pertahankan praktik yang sudah baik',
     action: 'Dokumentasikan praktik panen dan perawatan yang membuat kinerja naik agar tetap dijalankan.',
