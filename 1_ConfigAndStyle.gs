@@ -80,7 +80,7 @@ const DECK_CONFIG = {
   COVER_PERIOD_SOURCE: 'data',
 
   // Asal kolom total_tonasehasil: 'panen' = berat janjang yang DIPANEN; 'terjual' = berat janjang yang DIJUAL/ditimbang.
-  // Menentukan BJR (tonase ÷ janjang dipanen atau ÷ janjang terjual), nilai kerugian janjang, dan estimasi penjualan.
+  // Menentukan BJR (tonase ÷ janjang dipanen atau ÷ janjang terjual), nilai janjang yang belum tercatat, dan estimasi penjualan.
   TONASE_BASIS: 'terjual',
 
   // Ringkasan Kinerja: tampilkan bulan sebelumnya sebagai pembanding bulan terakhir (true/false)
@@ -89,14 +89,14 @@ const DECK_CONFIG = {
   // Minimal bulan lengkap agar tren dianalisis; di bawah ini deck memakai mode ringkasan (snapshot)
   MIN_MONTHS_FOR_TREND: 4,
 
-  // Kartu KPI di Ringkasan Eksekutif, 3–6 kartu (urutan = urutan kartu; 4 kartu = 1 baris, 5–6 kartu = 2 baris).
+  // Kartu KPI cadangan (template lama & paket); slide Kinerja Bulan Ini memakai EMPAT PILAR (PILLARS di file 5). 3–6 kartu.
   // Setiap kartu menampilkan realisasi BERDAMPINGAN dengan pembandingnya (baris di bawah angka):
   //   produksi_total            TBS terjual bulan laporan  vs target owner, bila kosong vs bulan sebelumnya
   //   yield_rata2               yield bulan laporan        vs target owner, bila kosong vs rata-rata periode
   //   bjr_rata2                 BJR bulan laporan          vs target owner, bila kosong vs rata-rata periode
   //   pendapatan_bulan_terakhir pendapatan bulan laporan   vs target owner, bila kosong vs bulan sebelumnya
   //   pencapaian_marihat        % dari potensi Marihat     (realisasi vs potensi ton/ha/tahun)
-  //   kebocoran_janjang         janjang hilang / nilainya  vs batas wajar (THRESHOLDS.FLOW_LOSS_PCT)
+  //   kebocoran_janjang         alur panen belum tercatat / nilainya  vs batas wajar (THRESHOLDS.FLOW_LOSS_PCT)
   //   pilihan lain: laba_bulan_terakhir, tanpa_berat, biaya_per_kg, pendapatan_total, margin_rata2
   // KPI yang datanya tidak ada di sheet otomatis diganti KPI lain yang datanya tersedia.
   KPIS: ['produksi_total', 'yield_rata2', 'bjr_rata2', 'pendapatan_bulan_terakhir', 'pencapaian_marihat', 'kebocoran_janjang'],
@@ -114,10 +114,11 @@ const DECK_CONFIG = {
     BLOCK_HA_MISMATCH: 0.10,    // total ha daftar blok vs luas panen
     NEW_BLOCK_SHARE: 0.15,      // blok baru > 15% luas daftar blok bulan itu -> "lonjakan blok baru"
     MUAT_VS_PANEN: 0.7,         // JJG dimuat < 70% JJG dipanen -> risiko restan (dari tabel mandor)
-    FLOW_LOSS_PCT: 5,           // kehilangan janjang antar-tahap > 5% (kumulatif) -> kebocoran
+    FLOW_LOSS_PCT: 5,           // janjang belum tercatat antar-tahap > 5% -> alur panen ke muat tidak tercatat
+    RKH_MIN_COVERAGE: 0.8,      // RKH (Rencana Kerja Harian) terisi < 80% bulan data -> temuan + rekomendasi R26
     FLOW_EXCESS_PCT: 2,         // tahap berikut > tahap sebelumnya lebih dari 2% (kumulatif) -> pencatatan tidak konsisten
     REPLANT_AGE: 25,            // umur > 25 tahun -> kandidat peremajaan
-    NOWEIGHT_PCT: 5,            // janjang terjual tanpa berat > 5% dari janjang terjual -> PERLU DICEK
+    NOWEIGHT_PCT: 5,            // data penjualan (berat) belum diinput untuk > 5% janjang yang keluar kebun -> PERLU DICEK
     UNSALE_MONTHS: 3,           // blok tanpa penjualan ≥ 3 bulan -> blok perlu ditelusuri
     BJR_BELOW_ACUAN: 0.10,      // BJR < 90% batas bawah acuan umur -> PERLU DICEK
     FIRST_MONTH_RAMP: 0.5,      // bulan pertama luas panen < 50% median -> kemungkinan bulan awal belum penuh
@@ -131,8 +132,8 @@ const DECK_CONFIG = {
     UPKEEP_MAX_RP_JJG: 100000,  // tanpa luas: upkeep > Rp100 ribu per janjang dipanen dalam sebulan tidak wajar
     UPKEEP_MAX_RP_HA_MONTH: 3000000, // upkeep > Rp3 juta/ha dalam satu bulan tidak wajar -> kemungkinan salah input
     BJR_MAX_KG: 35,             // BJR > 35 kg tidak wajar (standar Marihat tertinggi ±35 kg) -> salah catat/sampel timbang terlalu kecil
-    KPI_NOWEIGHT_PCT: 20,       // > 20% janjang bulan itu tanpa berat -> KPI tonase/yield tidak dibandingkan naik/turun (tonase kurang tercatat)
-    BJR_MAX_NOWEIGHT_PCT: 50,   // > 50% janjang terjual tanpa berat -> BJR dari sampel terlalu kecil, tidak jadi dasar status pupuk
+    KPI_NOWEIGHT_PCT: 20,       // > 20% janjang bulan itu belum diinput penjualannya -> KPI tonase/yield tidak dibandingkan naik/turun (tonase kurang tercatat)
+    BJR_MAX_NOWEIGHT_PCT: 50,   // > 50% janjang belum diinput penjualannya -> BJR dari sampel terlalu kecil, tidak jadi dasar status pupuk
     MIN_MONTHS_ANNUAL: 6,       // < 6 bulan data: angka per tahun hanya indikatif (musim panen: Jun–Sep ±38–40% panen setahun), penyebab blok rendah belum disimpulkan
     BLOCK_SUSPECT_ACH: 2.0,     // janjang/ha > 200% standar -> kemungkinan salah luas/nama blok, dikeluarkan dari analisis blok
     BLOCK_LOW_AREA: 0.3         // ≥ 30% luas blok berproduktivitas rendah -> ikut menjadi bukti indikasi kurang pupuk
@@ -289,7 +290,9 @@ const DECK_CONFIG = {
     FLOW_MUAT: ['jjg dimuat', 'janjang dimuat'],
     FLOW_TRIP: ['jjg masuk trip', 'janjang masuk trip', 'jjg delivery'],
     FLOW_SOLD: ['jjg terjual', 'janjang terjual'],                       // terjual DENGAN berat (= total_sale_jjg)
-    FLOW_SOLD_NOWEIGHT: ['jjg terjual tanpa berat', 'janjang terjual tanpa berat'],
+    FLOW_SOLD_NOWEIGHT: ['jjg terjual tanpa berat', 'janjang terjual tanpa berat'],   // = data penjualan (berat) belum diinput
+    // Opsional: jumlah RKH (Rencana Kerja Harian) yang diisi per bulan. Kolom tidak ada / 0 = RKH belum diisi.
+    RKH: ['rkh_count', 'total_rkh', 'jumlah rkh', 'rkh dibuat', 'rkh', 'rencana kerja harian'],
     // Opsional: tanggal admin terakhir input data mandor (acuan "Bulan Ini"); bila tidak ada, dipakai tanggal script dijalankan
     INPUT_DATE_LABEL: ['Tanggal Input', 'Tanggal Update', 'Update'],
     // Tabel "Biaya Pekerja per Kg atau Ha TBS"

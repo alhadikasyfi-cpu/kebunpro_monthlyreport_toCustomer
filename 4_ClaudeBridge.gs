@@ -170,6 +170,7 @@ function mergeAnswerBlocks(blocks) {
 function buildClaudePacket(data, plan) {
   const cfg = DECK_CONFIG.CLAUDE_INPUT, sec = DECK_CONFIG.SECURITY || {};
   const mains = plan.mains, leads = plan.leads, appendix = plan.appendix;
+  const summaryMains = (plan.costMain ? [plan.costMain] : []).concat(mains);
   const content = leads.concat(appendix);
   const detected = detectAnomalies(plan.topics, data);
   const candidates = detectRecommendations(data, plan.topics, detected);
@@ -184,13 +185,13 @@ function buildClaudePacket(data, plan) {
     .concat(slideBlocks.map((arr, i) => ({ a1: claudeCellA1(i + 1), kind: 'slides', slides: arr })));
   if (blocks.length > claudeCells().length) RUN_WARNINGS.push(`Jawaban butuh ${blocks.length} sel, tetapi CLAUDE_INPUT.CELLS hanya ${claudeCells().length} sel (${claudeCells().join(', ')}); tambahkan sel kosong di DECK_CONFIG.`);
   const blockPlan = blocks.map((b, i) => b.kind === 'utama'
-    ? `- Sel ${b.a1} (blok UTAMA): packet_id, storyline, agenda, agenda_notes, summaries (id: ${mains.map(m => m.id).join(', ')}), executive_summary, intro_notes, anomalies, anomaly_notes, conclusion.`
+    ? `- Sel ${b.a1} (blok UTAMA): packet_id, storyline, agenda (outcomes), agenda_notes, summaries (id: ${summaryMains.map(m => m.id).join(', ')}), executive_summary, intro_notes, anomalies, anomaly_notes, conclusion.`
     : `- Sel ${b.a1} (blok SLIDE ${i}/${slideBlocks.length}): packet_id dan slides untuk id berikut, URUT: ${b.slides.map(t => t.id).join(', ')}.`).join('\n');
 
   const flow = content.map(t => [
     `Slide ${t.page} [id=${t.id}] ${t.section} — ${t.title}`,
     `  Pertanyaan yang dijawab: ${t.question || '-'}`,
-    `  Menyambung dari: ${t.prev ? `slide ${t.prev.page} (${t.prev.title})` : 'Ringkasan Eksekutif (slide 3)'} — relasi: ${t.link || '-'}`,
+    `  Menyambung dari: ${t.prev ? `slide ${t.prev.page} (${t.prev.title})` : `Kinerja Bulan Ini (slide ${plan.introPage || 3})`} — relasi: ${t.link || '-'}`,
     `  Visual: ${t.visual}`
   ].join('\n')).join('\n');
 
@@ -211,8 +212,11 @@ PILIHAN TETAP (isi persis salah satu, huruf kecil):
 
 TARGET OWNER (diisi di sheet; pembanding utama bila ada): ${targetLine(data)}
 
-KARTU KPI DI RINGKASAN EKSEKUTIF (dihitung script; realisasi | pembanding)
-${computeOwnerKpis(data).map(k => `- ${k.name}: ${k.value}${k.unit ? ' ' + k.unit : ''} | ${k.note}`).join('\n')}
+KINERJA BULAN INI: EMPAT PILAR KPI DI SLIDE ${plan.introPage || 3} (dihitung script; realisasi | pembanding)
+${computePillars(data).map(pl => `- ${pl.title.toUpperCase()}: ` + [pl.main, pl.sub].filter(Boolean).map(k => `${k.name} ${k.value}${k.unit ? ' ' + k.unit : ''} (${k.note})`).join('; ')).join('\n')}
+
+RENCANA KERJA HARIAN (RKH)
+${describeRkh(data) || '-'}
 
 PRODUK SAWITPRO YANG BOLEH DISARANKAN (field product; pilih hanya bila langsung membantu masalahnya)
 ${(DECK_CONFIG.SAWITPRO_PRODUCTS || []).map(x => `- ${x.name} | ${x.benefit} | cocok untuk kode: ${(x.codes || []).join(', ') || '-'}`).join('\n') || '-'}
@@ -220,14 +224,16 @@ ${(DECK_CONFIG.SAWITPRO_PRODUCTS || []).map(x => `- ${x.name} | ${x.benefit} | c
 RENCANA BLOK JAWABAN (tiap blok = SATU objek JSON satu baris, ditempel pengguna ke satu sel)
 ${blockPlan}
 
-STRUKTUR DECK
-- Slide 1 cover; slide 2 Agenda & Tujuan Pertemuan (agenda + agenda_notes); slide 3 Ringkasan Eksekutif (executive_summary + intro_notes, di atas KARTU KPI); slide ringkasan untuk owner di bawah; slide ${plan.anomTopic ? plan.anomTopic.page : '-'} Temuan Utama (anomalies); slide ${plan.conclTopic ? plan.conclTopic.page : '-'} Rekomendasi (conclusion); sisanya penutup dan LAMPIRAN (slide detail di "ALUR LAMPIRAN").
-SLIDE RINGKASAN UNTUK OWNER (deck utama, urut sesuai pertanyaan owner):
-${mains.map(m => `Slide ${m.page} [id=${m.id}] ${m.title} — pertanyaan owner: ${(m.group && m.group.question) || '-'}; merangkum lampiran: ${m.members.map(x => `slide ${x.page} ${x.title}`).join('; ') || '-'}; ` +
-  (m.summary ? `visual yang tampil: grafik kesimpulan ${m.summary.desc || ''} (${m.summary.curLabel} vs ${m.summary.refLabel}): ${summaryLine(m.summary)}` : `visual yang tampil: ${m.chartTopic.title}`)).join('\n') || '-'}
+STRUKTUR DECK (agenda tetap, disusun script)
+DECK UTAMA: slide 1 cover; slide 2 Agenda & Tujuan Pertemuan (agenda.outcomes + agenda_notes); slide ${plan.introPage || 3} Kinerja Bulan Ini (executive_summary + intro_notes, di atas EMPAT PILAR KPI); slide ${plan.anomTopic ? plan.anomTopic.page : '-'} Temuan (anomalies); slide ${plan.conclTopic ? plan.conclTopic.page : '-'} Actionable Item (conclusion); slide ${plan.costMain ? plan.costMain.page : '-'} Struktur Biaya (summaries id m_biaya); slide ${plan.closingPage || '-'} Terima Kasih.
+DATA PENDUKUNG: slide ${plan.dividerPage || '-'} pembatas Lampiran, slide ${plan.tocPage || '-'} Daftar Data Pendukung, lalu tiap bagian = slide ringkasan bagian + slide lampirannya (lihat "ALUR LAMPIRAN").
+SLIDE RINGKASAN (summaries; Struktur Biaya di deck utama, ringkasan bagian di data pendukung):
+${summaryMains.map(m => `Slide ${m.page} [id=${m.id}] ${m.title} — pertanyaan owner: ${(m.group && m.group.question) || '-'}; merangkum lampiran: ${m.members.map(x => `slide ${x.page} ${x.title}`).join('; ') || '-'}; ` +
+  (m.structure ? `visual yang tampil: batang komposisi biaya + tabel komponen.\n${m.structure.facts}\nCatatan di slide: ${m.structure.caption}`
+    : m.summary ? `visual yang tampil: grafik kesimpulan ${m.summary.desc || ''} (${m.summary.curLabel} vs ${m.summary.refLabel}): ${summaryLine(m.summary)}` : `visual yang tampil: ${m.chartTopic.title}`)).join('\n') || '-'}
 
 ALUR LAMPIRAN (sudah ditetapkan, ikuti urutannya)
-Logika besar: kinerja bulan ini (hasil, uang masuk, biaya, laba) → kebocoran janjang (uang yang hilang dari panen sampai terjual) → penyebab naik-turun hasil (JJG/ha, BJR, umur tanaman) → keuangan (laba kotor, komposisi biaya, harga, margin) → tim kerja → tindakan.
+Logika besar: kinerja bulan ini (hasil, uang masuk, biaya, laba) → alur panen ke muat yang tidak tercatat (data panen, muat, dan penjualan yang belum diinput) → penyebab naik-turun hasil (JJG/ha, BJR, umur tanaman) → keuangan (laba kotor, komposisi biaya, harga, margin) → tim kerja → tindakan.
 ${flow}
 
 DATA BULANAN (CSV, pemisah ';', format mesin)
@@ -251,7 +257,7 @@ ${describeFertilizer(data)}
 FAKTA PER SLIDE
 ${content.filter(t => t.facts).map(t => `[${t.id}] ${t.facts}`).join('\n\n')}
 
-ANOMALI TERDETEKSI OLEH SCRIPT (bahan slide Temuan Utama)
+ANOMALI TERDETEKSI OLEH SCRIPT (bahan slide Temuan)
 ${detected.map((a, i) => `${i + 1}. [slide ${a.page || '-'} ${a.slide}] ${a.text}`).join('\n') || '-'}
 
 KATALOG REKOMENDASI STANDAR SAWIT (pilihan untuk conclusion)
@@ -396,7 +402,7 @@ function normalizeAgenda(out) {
     pages: (Array.isArray(it.pages) ? it.pages : []).map(Number).filter(n => n > 0)
   })).filter(it => it.title);
   const outcomes = (Array.isArray(ag.outcomes) ? ag.outcomes : []).map(o => trimToSentence(o, AI_LIMITS.OUTCOME_MAX_CHARS)).filter(Boolean).slice(0, 4);
-  if (items.length < 3 || !outcomes.length) RUN_WARNINGS.push('Agenda dari Claude belum lengkap (min. 3 agenda dan hasil yang dituju); agenda diisi otomatis.');
+  if (!outcomes.length) RUN_WARNINGS.push('Hasil yang dituju dari Claude belum ada; diisi otomatis.');
   return { items, outcomes, notes: trimToSentence(out.agenda_notes, AI_LIMITS.NOTES_MAX_CHARS) };
 }
 
@@ -435,8 +441,8 @@ function normalizeAiAnswer(out, plan) {
     };
   });
 
-  const mainIds = {};
-  plan.mains.forEach(m => { mainIds[m.id] = true; });
+  const mainIds = {}, summaryMains = plan.mains.concat(plan.costMain ? [plan.costMain] : []);
+  summaryMains.forEach(m => { mainIds[m.id] = true; });
   const summaries = {};
   (Array.isArray(out.summaries) ? out.summaries : []).forEach(m => {
     if (!m || !mainIds[m.id]) return;
@@ -447,7 +453,7 @@ function normalizeAiAnswer(out, plan) {
 
   const missSlides = plan.appendix.filter(t => !byId[t.id]);
   if (missSlides.length) RUN_WARNINGS.push(`Jawaban Claude belum memuat lampiran ${missSlides.map(t => t.appx).join(', ')}; teks lampiran itu diisi otomatis dari data.`);
-  const missMain = plan.mains.filter(m => !summaries[m.id]);
+  const missMain = summaryMains.filter(m => !summaries[m.id]);
   if (missMain.length) RUN_WARNINGS.push(`Jawaban Claude belum memuat ringkasan ${missMain.map(m => `"${m.title}"`).join(', ')}; diisi otomatis dari data.`);
 
   const c = out.conclusion && typeof out.conclusion === 'object' ? out.conclusion : {};
@@ -499,21 +505,21 @@ function fallbackSummary(data) {
   let s = `Laporan ini merangkum kinerja kebun ${data.title}${scope}.`;
   if (y) s += ` Yield rata-rata **${fmt(y.avg, 2)} ton/ha** per bulan, tertinggi ${fmt(y.max.value, 2)} ton/ha pada ${monthLong(y.max.p)} dan terendah ${fmt(y.min.value, 2)} ton/ha pada ${monthLong(y.min.p)}.`;
   const fc = data.flow && (data.flow.cur || data.flow);
-  if (fc && !fc.overSold && fc.lossJjg) s += ` Sebanyak ${fmt(fc.lossJjg, 0)} janjang dari panen sebelumnya masih belum terjual${fc.p ? ` hingga akhir ${monthLong(fc.p)}` : ''}${fc.lossRp ? `, setara ${fmtRp(fc.lossRp)}` : ''}.`;
+  if (fc && !fc.overSold && fc.lossJjg) s += ` Sebanyak ${fmt(fc.lossJjg, 0)} janjang dari panen sebelumnya belum tercatat terjual${fc.p ? ` hingga akhir ${monthLong(fc.p)}` : ''}${fc.lossRp ? ` (±${fmtRp(fc.lossRp)})` : ''}; sebagian besar karena data belum diinput.`;
   return trimToSentence(s, AI_LIMITS.SUMMARY_MAX_CHARS, true);
 }
 
 /** Saran cadangan per slide, dipilih berdasarkan SINYAL tren (generik untuk semua kebun). */
 const NOTES_RECO = {
-  tanpaberat: { default: 'Saran tindakan: wajibkan tiket timbang untuk setiap penjualan dan cocokkan dengan jumlah janjang yang diangkut.' },
+  tanpaberat: { default: 'Saran tindakan: input berat dari tiket timbang untuk setiap trip di hari yang sama, dan cek mingguan trip yang belum ada data penjualannya.' },
   blokunsale: { default: 'Saran tindakan: telusuri blok yang berulang kali tanpa penjualan bersama mandor panen dan muat.' },
   laba: { turun: 'Saran tindakan: laba kotor menurun; cek bulan dengan biaya pekerja melonjak dan rencanakan pengeluaran besar di bulan berpendapatan tinggi.',
           default: 'Saran tindakan: pantau bulan dengan laba kotor terendah dan cocokkan dengan rincian biaya pekerjanya.' },
   biayakomposisi: { naik: 'Saran tindakan: biaya pekerja meningkat; tinjau hari kerja dan output per orang pada komponen terbesar.',
                     default: 'Saran tindakan: pantau komponen biaya terbesar dan bandingkan dengan janjang yang dihasilkan.' },
-  alurjjg: { default: 'Saran tindakan: lakukan rekonsiliasi harian jumlah janjang di TPH, saat muat, di surat jalan, dan di tiket timbang.' },
-  restan: { naik: 'Saran tindakan: selisih panen-muat makin besar; tambah kapasitas muat dan cek janjang yang tertinggal di TPH.',
-            default: 'Saran tindakan: tetapkan batas maksimal janjang menginap di TPH dan pantau setiap minggu.' },
+  alurjjg: { default: 'Saran tindakan: input panen, muat, dan penjualan setiap hari (paling lambat H+1), lalu cocokkan jumlahnya tiap akhir minggu.' },
+  restan: { naik: 'Saran tindakan: selisih panen-muat makin besar; pastikan data muat diinput setiap hari, lalu cek janjang yang benar-benar tertinggal di TPH.',
+            default: 'Saran tindakan: input data muat setiap hari agar selisih panen-muat hanya menunjukkan janjang yang benar-benar menginap di TPH.' },
   scorecard: { default: 'Mulai diskusi dari indikator dengan selisih terbesar terhadap rata-rata.' },
   produksi: { turun: 'Saran tindakan: telusuri apakah penurunan produksi berasal dari luas panen atau yield, lalu fokus pada komponen yang turun.',
               naik: 'Saran tindakan: pastikan tenaga panen dan armada angkut cukup untuk menampung kenaikan produksi.',
@@ -523,8 +529,8 @@ const NOTES_RECO = {
   yield: { turun: 'Saran tindakan: cek apakah penurunan berasal dari jumlah tandan (JJG/ha) atau berat tandan (BJR).',
            fluktuatif: 'Saran tindakan: telusuri bulan terendah terhadap rotasi panen dan pemupukan untuk menstabilkan yield.',
            default: 'Saran tindakan: pertahankan rotasi panen dan kriteria matang panen yang konsisten.' },
-  jjg: { turun: 'Saran tindakan: periksa rotasi panen dan buah matang yang tertinggal di pokok.',
-         default: 'Saran tindakan: pastikan rotasi panen konsisten agar janjang matang tidak tertinggal.' },
+  jjg: { turun: 'Saran tindakan: periksa rotasi panen lewat RKH dan buah matang yang tertinggal di pokok.',
+         default: 'Saran tindakan: jadwalkan rotasi panen lewat RKH agar janjang matang tidak tertinggal.' },
   bjr: { turun: 'Saran tindakan: tegakkan kriteria matang panen dan cocokkan BJR dengan tiket timbangan.',
          fluktuatif: 'Saran tindakan: cocokkan BJR ekstrem dengan tiket timbangan dan jumlah janjang.',
          default: 'Saran tindakan: pantau BJR per blok untuk melihat blok dengan tandan ringan.' },
@@ -562,10 +568,10 @@ function fallbackNotes(task) {
 }
 
 function fallbackIntroNotes(data, tasks) {
-  const secs = [];
-  tasks.forEach(t => { if (t.section && secs.indexOf(t.section) < 0) secs.push(t.section); });
-  return `${fallbackSummary(data)} Alur pembahasan: ${secs.join(' → ')}. ` +
-    tasks.filter(t => t.kind !== 'conclusion').map(t => `Slide ${t.page} ${t.title}: ${t.fallback}`).join(' ');
+  // Slide Kinerja Bulan Ini: bacakan empat pilar, lalu alur deck utama; rincian ada di data pendukung
+  const pl = computePillars(data).map(p => `${p.title}: ${[p.main, p.sub].filter(Boolean).map(k => `${k.name} ${k.value}${k.unit ? ' ' + k.unit : ''} (${k.note})`).join('; ')}`);
+  return `${fallbackSummary(data)} Kinerja bulan ini per pilar. ${pl.join('. ')}. Setelah ini dibahas temuan, actionable item, dan struktur biaya; ` +
+    `rincian setiap angka ada di data pendukung (${(tasks || []).map(t => t.title).join(', ')}).`;
 }
 
 /** Aksi owner cadangan, dipilih dari kondisi data (bukan teks tetap per kebun). */
@@ -615,10 +621,12 @@ function fallbackActions(data, pageOf) {
 function fallbackAnomalies(detected) {
   const why = t => /ANOMALI DATA|TIDAK KONSISTEN/.test(t) ? ['Dua tabel berbeda untuk hal yang sama; laporan bisa keliru.', 'Samakan sumber data. PIC: admin kebun · sebelum laporan berikut.']
     : /NEGATIF/.test(t) ? ['Biaya melebihi pendapatan; bila berulang, kebun merugi.', 'Cek rincian biaya bulan itu. PIC: owner · bulan ini.']
-    : /TIDAK BISA DIUKUR/.test(t) ? ['Panen tidak tercatat lengkap; kebocoran janjang tidak bisa dinilai.', 'Catat semua janjang di TPH setiap hari. PIC: mandor panen · mulai minggu ini.']
-    : /tidak ada janjang terjual tercatat/.test(t) ? ['Satu bulan panen tanpa penjualan tercatat; pendapatan bisa hilang dari laporan.', 'Cek dan input penjualan bulan itu. PIC: admin kebun · minggu ini.']
-    : /kebocoran janjang/.test(t) ? ['Janjang dipanen tidak menjadi uang.', 'Rekonsiliasi TPH–muat–timbang. PIC: mandor muat · minggu ini.']
-    : /melebihi/.test(t) && /janjang/.test(t) ? ['Catatan antar-tahap tidak sinkron; kebocoran sulit diukur.', 'Catat janjang di TPH tiap hari. PIC: mandor panen · bulan ini.']
+    : /RKH/.test(t) ? ['Tanpa RKH, rotasi panen di lapangan tidak bisa dibandingkan dengan rencananya.', 'Isi RKH tiap hari untuk ancak panen & rawat. PIC: asisten/mandor · mulai minggu ini.']
+    : /TIDAK BISA DIUKUR/.test(t) ? ['Input panen belum lengkap; alur panen ke muat tidak bisa dinilai.', 'Input semua janjang panen setiap hari. PIC: mandor panen · mulai minggu ini.']
+    : /tidak ada janjang terjual tercatat/.test(t) ? ['Satu bulan panen tanpa penjualan tercatat; pendapatan belum masuk laporan.', 'Input penjualan bulan itu. PIC: admin kebun · minggu ini.']
+    : /penjualan[^.]*belum diinput/.test(t) ? ['Tonase dan pendapatan tampak lebih kecil dari sebenarnya.', 'Input berat tiket timbang tiap trip. PIC: admin kebun · mulai minggu ini.']
+    : /alur panen tidak tercatat/.test(t) ? ['Panen belum tercatat dimuat/terjual; umumnya data belum diinput.', 'Input panen, muat, jual tiap hari (H+1). PIC: mandor & admin · minggu ini.']
+    : /melebihi/.test(t) && /janjang/.test(t) ? ['Catatan antar-tahap tidak sinkron; alur panen sulit dinilai.', 'Input janjang panen & muat tiap hari. PIC: mandor panen · bulan ini.']
     : /acuan umur/.test(t) ? ['Tandan lebih ringan dari wajarnya; tonase tertahan.', 'Cek kematangan buah & timbangan. PIC: mandor panen · minggu ini.']
     : /restan/.test(t) ? ['Janjang tak segera dimuat menurunkan mutu dan harga.', 'Cek armada & catatan muat. PIC: mandor muat · minggu ini.']
     : /ANOMALI/.test(t) ? ['Data kosong membuat analisis tidak bisa dinilai.', 'Lengkapi data di sheet. PIC: admin kebun · sebelum generate.']

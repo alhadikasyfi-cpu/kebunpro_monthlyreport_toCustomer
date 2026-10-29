@@ -48,6 +48,7 @@ function buildFertilizerStatus(){ return null; }
 function describeFertStatus(){ return 'STATUS PEMUPUKAN: -'; }
 function buildBlockProduction(){ return null; }
 function describeBlockProduction(){ return 'PRODUKSI PER BLOK: -'; }
+function describeRkh(){ return 'PERLU DICEK: RKH (Rencana Kerja Harian) belum diisi'; }
 function blockProdTableRows(){ return null; }
 function mkey(p){ return p.y + '-' + p.m; }
 const KPI_LIBRARY = {};
@@ -108,13 +109,17 @@ const plan = run('planDeck(loadSheetData(sheet))');
 ctx.plan = plan; ctx.data = data;
 ok(plan.mains.length === 5 && plan.appendix.length === 24 && plan.appendix[0].id === 'scorecard', `rencana: ${plan.mains.length} slide ringkasan, ${plan.appendix.length} lampiran`);
 ok(data.targets.tbs === 1200, 'target owner terbaca dari sheet (Target TBS = 1.200)');
-ok(plan.mains[0].page === 4 && plan.anomTopic.page === 9 && plan.conclTopic.page === 10 && plan.appendix[0].page === 14, `halaman: ringkasan ${plan.mains.map(m => m.page)}, temuan ${plan.anomTopic.page}, rekomendasi ${plan.conclTopic.page}, A1 hlm ${plan.appendix[0].page}`);
+// Deck utama: Kinerja (3) → Temuan (4) → Actionable (5) → [Struktur Biaya] → Terima Kasih → pembatas → daftar → data pendukung
+ok(plan.introPage === 3 && plan.anomTopic.page === 4 && plan.conclTopic.page === 5 && !plan.costMain && plan.closingPage === 6 && plan.tocPage === 8 &&
+   plan.mains[0].page === 9 && plan.appendix[0].page === 10 && plan.mains[1].page === 15,
+  `halaman: temuan ${plan.anomTopic.page}, actionable ${plan.conclTopic.page}, penutup ${plan.closingPage}, ringkasan bagian ${plan.mains.map(m => m.page)}, A1 hlm ${plan.appendix[0].page}`);
+ok(plan.support.map(t => t.page).every((pg, i) => pg === 9 + i) && plan.support[1] === plan.appendix[0], 'data pendukung: ringkasan bagian langsung diikuti lampirannya, nomor halaman berurutan');
 const packet = run('buildClaudePacket(data, plan)');
 ctx.packet = packet;
 ok(/^[0-9a-f]{8}$/.test(packet.id), 'ID paket 8 hex: ' + packet.id);
 ok(packet.blocks.length === 3 && packet.cells.join() === 'D1,D2,D3', 'blok jawaban: ' + packet.cells.join(','));
 ok(!/Pak Budi|Dumai/.test(packet.text) && /KEBUN_X/.test(packet.text) && /LOKASI_X/.test(packet.text), 'nama disamarkan di paket (KEBUN_X, LOKASI_X)');
-ok(/TARGET OWNER .*TBS 1\.200 ton\/bulan/.test(packet.text) && /PRODUK SAWITPRO/.test(packet.text) && /Dokter Sawit/.test(packet.text) && /agenda, agenda_notes/.test(packet.text), 'paket memuat target owner, produk SawitPRO, dan agenda');
+ok(/TARGET OWNER .*TBS 1\.200 ton\/bulan/.test(packet.text) && /PRODUK SAWITPRO/.test(packet.text) && /Dokter Sawit/.test(packet.text) && /agenda \(outcomes\), agenda_notes/.test(packet.text) && /EMPAT PILAR KPI/.test(packet.text) && /RKH/.test(packet.text), 'paket memuat target owner, produk SawitPRO, agenda, empat pilar KPI, dan RKH');
 ok(packet.text.indexOf('ID_PAKET: ' + packet.id) > 0 && /=== AKHIR PAKET ===/.test(packet.text), 'header & penutup paket ada');
 const packet2 = run('buildClaudePacket(data, plan)');
 ok(packet2.id === packet.id, 'ID paket stabil untuk data yang sama');
@@ -166,7 +171,7 @@ ok(kp[0].note === 'Target 250 ton · tercapai 94%' && kp[0].tone === 'neutral', 
 ok(/vs rata-rata 2 bulan/.test(kp[1].note) && kp[1].tone === 'good', 'yield vs rata-rata periode');
 ok(kp[2].name === 'BJR Sep 26' && /▼ 4% vs rata-rata 2 bulan \(6,7 kg\)/.test(kp[2].note) && kp[2].tone === 'bad', 'BJR bulan laporan vs rata-rata periode (tanpa target)');
 ok(/▲ 31% vs Agu 26/.test(kp[3].note), 'pendapatan vs bulan lalu');
-ok(kp[5].name === 'Kerugian janjang Sep 26' && kp[5].value === '60,0' && /1\.500 jjg tertahan >1 bln · ▲ 50% vs Agu 26/.test(kp[5].note) && kp[5].tone === 'bad', 'kebocoran BULAN LAPORAN (bukan kumulatif) vs bulan lalu');
+ok(kp[5].name === 'Nilai belum tercatat Sep 26' && kp[5].value === '60,0' && /1\.500 jjg belum tercatat >1 bln · ▲ 50% vs Agu 26/.test(kp[5].note) && kp[5].tone === 'bad', 'alur panen tidak tercatat BULAN LAPORAN (bukan kumulatif) vs bulan lalu');
 run('kd.targets = { tbs: null, yield: null, bjr: null, revenue: null }');
 const kn = run('computeOwnerKpis(kd)');
 console.log(kn.slice(0, 4).map(k => `   ${k.name}: ${k.value} ${k.unit} | ${k.note} [${k.tone}]`).join('\n'));
@@ -194,7 +199,8 @@ ok(prods.length === 2 && overlapFree && bottom <= run('DECK_CONFIG.LAYOUT.BOTTOM
 const kreq = run(`(function(){ const b = new SlideBatch('pg','kpi'); drawKpiCards(b, computeOwnerKpis(kd), 160); return JSON.stringify(b.req); })()`);
 ok(/vs rata-rata 2 bulan/.test(kreq), 'kartu KPI menampilkan pembanding');
 const agf = run('fallbackAgenda(plan)');
-ok(agf.items.length === 6 && agf.items[5].pages[0] === 9 && agf.outcomes.length === 3, 'agenda cadangan: 5 sesi + sesi keputusan');
+ok(agf.items.map(i => i.title).join('|') === 'Kinerja Bulan Ini|Temuan (Findings)|Actionable Item|Terima Kasih|Data Pendukung' && agf.items[0].pages[0] === 3 &&
+   agf.items[4].pages[0] === plan.dividerPage && agf.outcomes.length === 3, `agenda tetap: ${agf.items.map(i => `${i.title} (hlm ${i.pages[0]})`).join(', ')}`);
 run('RUN_WARNINGS = []');
 
 // 4. ID tidak cocok (tanpa UI -> tidak dipakai)
@@ -322,12 +328,12 @@ ok(FR3.soldLater === 10000 && FR3.lossJjg === 0 && FR3.agedStock === 0 && FR3.pe
 delete ctx2.dR.partialFlow;
 ok(FR2[2].lossJjg === 2000 && FR2[2].agedStock === 2000 && FR2[2].pendingJjg === 20000 && FR2[2].lossRp > 0,
   `janjang lama terjual lebih dulu: Jul menjual sisa Jun dulu, Agu baru tertahan >1 bulan ${FR2[2].lossJjg} jjg (jumlah minimal), panen Agu belum terjual ${FR2[2].pendingJjg}`);
-const k2 = run2('computeOwnerKpis(D2)').find(k => /janjang|belum terjual/i.test(k.name));
-ok(k2 && /Sep 26/.test(k2.name) && /pantau penjualan/.test(k2.note), `KPI kebocoran: ${k2 && `${k2.name} ${k2.value} ${k2.unit} | ${k2.note}`}`);
+const k2 = run2('computeOwnerKpis(D2)').find(k => /tercatat/i.test(k.name));
+ok(k2 && /Sep 26/.test(k2.name) && /pastikan muat & jual diinput/.test(k2.note), `KPI alur panen tidak tercatat: ${k2 && `${k2.name} ${k2.value} ${k2.unit} | ${k2.note}`}`);
 ok(P2.mains.every(m => m.summary && m.summary.rows.some(r => r.cur !== null)), `semua slide utama punya grafik kesimpulan: ${P2.mains.map(m => m.id + '=' + (m.summary ? m.summary.rows.length : 0)).join(', ')}`);
 ok(P2.appendix.some(t => t.id === 'tanah') && P2.appendix.some(t => t.id === 'pupuk') && P2.appendix.find(t => t.id === 'tanah').mainOf.id === 'm_penyebab', 'lampiran Jenis Tanah & Kebutuhan Pupuk masuk tema Penyebab');
 const pk2 = run2('buildClaudePacket(D2, P2)');
-ok(/KEBOCORAN BULAN LAPORAN/.test(pk2.text) && /JENIS TANAH BLOK/.test(pk2.text) && /REKOMENDASI PUPUK PREDIKSI/.test(pk2.text) && /NERACA HARA/.test(pk2.text) && /grafik kesimpulan/.test(pk2.text) && /Uji Tanah Dokter Sawit/.test(pk2.text) && !/Robert C/.test(pk2.text),
+ok(/ALUR PANEN KE MUAT\/JUAL BULAN LAPORAN/.test(pk2.text) && /JENIS TANAH BLOK/.test(pk2.text) && /REKOMENDASI PUPUK PREDIKSI/.test(pk2.text) && /NERACA HARA/.test(pk2.text) && /grafik kesimpulan/.test(pk2.text) && /Uji Tanah Dokter Sawit/.test(pk2.text) && !/Robert C/.test(pk2.text),
   'paket: kebocoran bulan laporan, jenis tanah, kebutuhan pupuk, grafik kesimpulan, produk uji tanah; nama tetap disamarkan');
 const rc2 = run2('detectRecommendations(D2, P2.topics, detectAnomalies(P2.topics, D2))').map(r => r.code);
 ok(rc2.indexOf('R22') >= 0 && rc2.indexOf('R24') >= 0, `rekomendasi terindikasi: ${rc2.join(', ')} (R22 uji tanah, R24 pupuk sesuai tanah)`);
@@ -546,7 +552,7 @@ ctx2.dR13 = { upahRatio: [3, 15, 20, 10].map((v, i) => ({ p: { y: 2026, m: 5 + i
 ok(run2(`RECO_CATALOG.find(r => r.code === 'R13').when(dR13)`) === null, 'R13 tidak terpicu bila porsi upah bulan laporan justru turun');
 // KPI tonase dengan banyak janjang tanpa berat tidak diberi panah naik/turun
 const kNw = run2(`OWNER_KPIS.produksi_total(Object.assign({}, D2, { noWeight: { monthly: [{ p: { y: 2026, m: 8 }, share: 64, ton: 250 }] } }))`);
-ok(/Hanya janjang berberat; 64% terjual tanpa berat/.test(kNw.note) && kNw.tone === 'neutral', `KPI tonase: "${kNw.note}"`);
+ok(/Penjualan 64% janjang belum diinput/.test(kNw.note) && kNw.tone === 'neutral', `KPI tonase: "${kNw.note}"`);
 
 // Blok yang baru muncul disetahunkan sejak bulan pertamanya; blok besar hampir tanpa janjang -> pencapaian Marihat dua versi
 const bpLate = run2(`(function(){ const b = D2.blocks.blocks.find(x => x.name === 'Robert C'), f = b.firstP; b.firstP = D2.blocks.monthly[D2.blocks.monthly.length - 1].p;
@@ -595,5 +601,55 @@ ok(/PRODUKSI PER BLOK/.test(pk2.text) && /Blok prioritas uji daun dan uji tanah/
    /^1 blok (rutin dipanen|janjang rendah)/.test(run2('dataHeadline("blokprod", D2)')) && run2('dataHeadline("blokprod", D2)').length <= 45 &&
    /mulai dari blok A1/.test(run2('detectRecommendations(D2, P2.topics, detectAnomalies(P2.topics, D2))').find(r => r.code === 'R23').evidence),
   'paket, grafik kesimpulan Penyebab, judul otomatis, dan R23 memakai produksi per blok');
+
+// 11. Susunan deck baru: Kinerja Bulan Ini (4 pilar) → Temuan → Actionable Item → Struktur Biaya → Terima Kasih → data pendukung
+ok(P2.costMain && P2.anomTopic.page === 4 && P2.conclTopic.page === 5 && P2.costMain.page === 6 && P2.closingPage === 7 && P2.dividerPage === 8 &&
+   P2.support[0] === P2.mains[0] && P2.support[0].page === 10 && P2.costMain.members.every(t => t.mainOf.id === 'm_keuangan'),
+  `deck utama: temuan ${P2.anomTopic.page}, actionable ${P2.conclTopic.page}, struktur biaya ${P2.costMain.page}, terima kasih ${P2.closingPage}; data pendukung mulai hlm ${P2.support[0].page}`);
+const PL = run2('computePillars(D2)');
+ok(PL.map(p => p.title).join('|') === 'Panen|Penjualan & Pendapatan|Perawatan|Produktivitas' && /Janjang dipanen Sep 26/.test(PL[0].main.name) && /▲ 8% vs Agu 26/.test(PL[0].main.note) &&
+   /Pendapatan Sep 26/.test(PL[1].main.name) && /Yield Sep 26/.test(PL[3].main.name) && PL[3].sub && PL.every(p => p.main && p.main.note),
+  `empat pilar KPI: ${PL.map(p => `${p.title}: ${p.main.name} ${p.main.value} (${p.main.note})${p.sub ? ` + ${p.sub.name}` : ''}`).join(' | ')}`);
+ok(PL[2].main.value === '-' && /belum tersedia/.test(PL[2].main.note), 'pilar Perawatan tanpa data upkeep: ditulis "Data belum tersedia", bukan angka 0');
+const CS = run2('buildCostStructure(D2)');
+const csRow = n => CS.rows.find(r => r.name === n);
+ok(CS && mkeyT(CS.p) === '2026-8' && csRow('Panen').share === 100 && Math.round(csRow('Total biaya pekerja').cur) === 2.6e7 && csRow('Laba kotor') && CS.refN === 6 &&
+   /Laba kotor September 2026/.test(CS.caption) && /STRUKTUR BIAYA September 2026/.test(CS.facts),
+  `struktur biaya ${run2('monthLong(buildCostStructure(D2).p)')}: ${CS.rows.map(r => `${r.name} ${Math.round(r.cur / 1e6)} jt`).join(', ')}; ${CS.caption}`);
+function mkeyT(p) { return p.y + '-' + p.m; }
+const csDraw = run2(`(function(){ RUN_WARNINGS = []; const b = new SlideBatch('pg','cs'); drawCostStructure(b, buildCostStructure(D2)); return { req: JSON.stringify(b.req), texts: b.texts, w: RUN_WARNINGS.slice() }; })()`);
+const CSA = run2('DECK_CONFIG.LAYOUT.CONTENT');
+ok(/createTable/.test(csDraw.req) && /Komposisi biaya pekerja September 2026/.test(csDraw.req) && /Laba kotor/.test(csDraw.req) && !csDraw.w.length &&
+   csDraw.texts.every(t => t.y + t.h <= CSA.top + CSA.height + 1 && t.x + t.w <= CSA.left + CSA.width + 1), 'slide Struktur Biaya tergambar: batang komposisi + tabel komponen, tidak keluar batas');
+// Komponen yang rutin tercatat tetapi kosong di bulan laporan = "belum diinput", bukan biaya nol
+ctx2.dMiss = Object.assign({}, D2, { costHarvest: D2.costHarvest.map(x => (x.p.m === 8 ? Object.assign({}, x, { value: 0 }) : x)),
+  costUpkeep: D2.costTotal.map(x => ({ p: x.p, label: x.label, value: x.value })) });
+const CSM = run2('buildCostStructure(dMiss)');
+ok(CSM.missing.length === 1 && CSM.missing[0].name === 'Panen' && CSM.rows.find(r => r.name === 'Panen').cur === null && /Biaya panen September 2026 belum diinput/.test(CSM.caption) &&
+   run2('dataHeadline("m_biaya", dMiss)') === 'Biaya panen Sep belum diinput' && /belum diinput/.test(run2(`(function(){ const b = new SlideBatch('pg','m'); drawCostStructure(b, buildCostStructure(dMiss)); return JSON.stringify(b.req); })()`)),
+  `biaya panen yang rutin tercatat tetapi kosong bulan ini ditulis "belum diinput": ${CSM.caption.split('. ')[0]}`);
+const plDraw = run2(`(function(){ RUN_WARNINGS = []; const b = new SlideBatch('pg','pl'); drawPillarCards(b, computePillars(D2), 150); return { req: JSON.stringify(b.req), texts: b.texts, w: RUN_WARNINGS.slice() }; })()`);
+const BOT = run2('DECK_CONFIG.LAYOUT.BOTTOM');
+ok(/PENJUALAN & PENDAPATAN/.test(plDraw.req) && /PRODUKTIVITAS/.test(plDraw.req) && !plDraw.w.length && plDraw.texts.every(t => t.y + t.h <= BOT + 1),
+  `kartu empat pilar tergambar tanpa peringatan dan di atas footer (bawah ${Math.max.apply(null, plDraw.texts.map(t => t.y + t.h)).toFixed(1)} ≤ ${BOT})`);
+ok(/Biaya pekerja \d+% dari pendapatan Sep/.test(run2('dataHeadline("m_biaya", D2)')) && run2('dataHeadline("m_biaya", D2)').length <= 45, `judul otomatis Struktur Biaya: "${run2('dataHeadline("m_biaya", D2)')}"`);
+// RKH: belum diisi -> temuan + rekomendasi R26; terisi lengkap -> tidak ada temuan
+const anomR = run2('detectAnomalies(P2.topics, D2)');
+const recR = run2('detectRecommendations(D2, P2.topics, detectAnomalies(P2.topics, D2))');
+ok(!D2.rkh.filled && anomR.some(a => /RKH/.test(a.text)) && recR.some(r => r.code === 'R26' && r.priority === 'tinggi' && /RKH belum diisi/.test(r.evidence)) && /RENCANA KERJA HARIAN \(RKH\)\nPERLU DICEK: RKH/.test(pk2.text),
+  'RKH belum diisi: masuk temuan, paket, dan rekomendasi R26 (rotasi panen lewat RKH)');
+ctx2.dK = Object.assign({}, D2, { rkhRaw: D2.yield.map(x => ({ p: x.p, value: 25 })) });
+run2('dK.rkh = buildRkh(dK)');
+ok(ctx2.dK.rkh.filled && ctx2.dK.rkh.coverage === 1 && run2(`RECO_CATALOG.find(r => r.code === 'R26').when(dK)`) === null && !/PERLU DICEK/.test(run2('describeRkh(dK)')),
+  'RKH terisi semua bulan: tidak ada temuan dan R26 tidak terpicu');
+ok(run2(`findCell([['x', 'RKH']], DECK_CONFIG.HEADERS.RKH) !== null`), 'kolom RKH dikenali dari header "RKH"');
+// Istilah: tidak ada "kebocoran", "kerugian janjang", atau "terjual tanpa berat" di paket dan teks deck
+const deckText = pk2.text + JSON.stringify(PL) + JSON.stringify(run2('fallbackAnomalies(detectAnomalies(P2.topics, D2))')) +
+  JSON.stringify(run2('MAIN_SUMMARY.m_kebocoran(D2)')) + P2.appendix.map(t => t.fallback + t.title).join(' ') + P2.mains.map(m => m.title).join(' ');
+// id internal (m_kebocoran) dan larangan untuk Claude ("BUKAN janjang hilang", "jangan menulisnya ...") bukan teks deck
+const bad = deckText.replace(/m_kebocoran|BUKAN janjang hilang|sebagai janjang hilang|jangan menulisnya "terjual tanpa berat"/g, '').match(/kebocoran|kerugian janjang|terjual tanpa (catatan )?berat|janjang hilang|estimasi kerugian/gi);
+ok(!bad, `istilah baru dipakai di paket & deck (penjualan belum diinput, alur panen ke muat tidak tercatat)${bad ? `; masih ada: ${[...new Set(bad)].join(', ')}` : ''}`);
+ok(/data penjualannya \(berat\/tiket timbang\) belum diinput/.test(run2('describeNoWeight(D2)')) && /Data Penjualan Belum Diinput/.test(P2.appendix.find(t => t.id === 'tanpaberat').title) &&
+   P2.mains.find(m => m.id === 'm_kebocoran').title === 'Alur Panen ke Muat Tidak Tercatat', 'judul bagian & lampiran memakai istilah baru');
 
 console.log(process.exitCode ? '\nADA YANG GAGAL' : '\nSEMUA UJI LOLOS');

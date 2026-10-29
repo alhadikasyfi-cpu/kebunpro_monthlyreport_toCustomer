@@ -16,7 +16,7 @@
 
 const RECO_CATALOG = [
   { code: 'R01', title: 'Perketat rotasi panen',
-    action: 'Jaga rotasi panen 7–10 hari per ancak agar janjang matang tidak tertinggal di pokok.',
+    action: 'Jaga rotasi panen 7–10 hari per ancak agar janjang matang tidak tertinggal di pokok; jadwalkan ancak lewat RKH agar rotasinya bisa dipantau.',
     signals: 'JJG/ha turun atau fluktuatif; produksi naik-turun tajam antar-bulan.',
     topics: ['jjg', 'produksi'],
     when: d => { const P = d.blockProd;
@@ -99,9 +99,9 @@ const RECO_CATALOG = [
       // hanya bila ada janjang yang tertahan > 1 bulan (selisih satu bulan saja bisa karena waktu muat/jual)
       const F = d.flow, held = F && F.cur && !F.cur.overSold && F.cur.lossJjg > 0;
       const st = held && F.steps.find(x => x.from === 'Dipanen' && x.loss);
-      if (st) return { evidence: `${fmt(st.gap, 0)} jjg (${fmt(st.pct, 0)}%) dipanen tidak tercatat dimuat${st.rp ? ` ≈ ${fmtRp(st.rp)}` : ''}`, priority: 'tinggi' };
+      if (st) return { evidence: `${fmt(st.gap, 0)} jjg (${fmt(st.pct, 0)}%) dipanen belum tercatat dimuat${st.rp ? ` ≈ ${fmtRp(st.rp)}` : ''}; bila data muat sudah lengkap, berarti kapasitas muat kurang`, priority: 'sedang' };
       // hanya temuan restan bertanda tertahan (muat < panen), bukan "dimuat melebihi dipanen"
-      const a = (ctx.detected || []).find(x => /restan/.test(x.text) && !/melebihi|tidak tercatat menjual/.test(x.text)); return a ? { evidence: a.text.replace(/^PERLU DICEK:\s*/, ''), priority: 'tinggi' } : null; } },
+      const a = (ctx.detected || []).find(x => /restan/.test(x.text) && !/melebihi|tidak tercatat menjual/.test(x.text)); return a ? { evidence: a.text.replace(/^PERLU DICEK:\s*/, ''), priority: 'sedang' } : null; } },
 
   { code: 'R10', title: 'Samakan produktivitas antar-pemanen',
     action: 'Tetapkan target JJG/hari berbasis capaian terbaik, tinjau pembagian ancak, dan beri insentif premi.',
@@ -141,7 +141,7 @@ const RECO_CATALOG = [
       return { evidence: `porsi upah terhadap harga jual ${monthShort(s.last.p)} ${fmt(s.last.value, 0)}% (rata-rata ${fmt(s.avg, 0)}%), cenderung naik`, priority: 'sedang' }; } },
 
   { code: 'R14', title: 'Lengkapi dan rapikan pencatatan data',
-    action: 'Lengkapi data yang kosong dan samakan sumber angka antar-tabel sebelum laporan berikutnya.',
+    action: 'Lengkapi data yang kosong dan samakan sumber angka antar-tabel; tetapkan admin yang menginput data setiap hari, bukan menumpuk di akhir bulan.',
     signals: 'Ada data kosong, tabel tidak konsisten, atau anomali yang belum terjelaskan.',
     topics: ['anomali'],
     when: d => { const miss = checkDataCompleteness(d);
@@ -160,34 +160,34 @@ const RECO_CATALOG = [
     topics: ['bjr', 'umur'],
     when: () => null },
 
-  { code: 'R18', title: 'Telusuri kebocoran janjang per tahap',
-    action: 'Rekonsiliasi harian jumlah janjang di TPH, saat muat, di surat jalan, dan di tiket timbang; lakukan cek mendadak dan beri penanda/segel pada janjang di TPH.',
-    signals: 'Janjang dipanen tidak sampai dimuat/terjual di atas ambang; selisih menumpuk tiap bulan.',
+  { code: 'R18', title: 'Input panen, muat, dan jual setiap hari',
+    action: 'Input janjang panen, muat, dan penjualan di KebunPRO setiap hari (paling lambat H+1) oleh mandor dan admin; cocokkan jumlahnya tiap akhir minggu. Bila setelah input lengkap masih ada selisih, baru telusuri janjang yang tertinggal di TPH.',
+    signals: 'Janjang dipanen belum tercatat dimuat/terjual di atas ambang; selisih menumpuk tiap bulan (umumnya karena data belum diinput).',
     topics: ['alurjjg', 'restan', 'mandormuat'],
     when: d => { const F = d.flow; if (!F) return null;
       // bulan laporan dulu (dibanding bulan sebelumnya); kumulatif hanya bila bulan laporan tidak terukur
       const c = F.cur && !F.cur.overSold ? F.cur : null, p = F.prev && !F.prev.overSold ? F.prev : null;
-      if (c && c.lossJjg && c.lossPct > DECK_CONFIG.THRESHOLDS.FLOW_LOSS_PCT) return { evidence: `${monthShort(c.p)}: ${fmt(c.lossJjg, 0)} jjg (${fmt(c.lossPct, 0)}%) panen bulan sebelumnya masih belum terjual${c.lossRp ? ` ≈ ${fmtRp(c.lossRp)}` : ''}` +
+      if (c && c.lossJjg && c.lossPct > DECK_CONFIG.THRESHOLDS.FLOW_LOSS_PCT) return { evidence: `${monthShort(c.p)}: ${fmt(c.lossJjg, 0)} jjg (${fmt(c.lossPct, 0)}%) panen bulan sebelumnya belum tercatat terjual${c.lossRp ? ` ≈ ${fmtRp(c.lossRp)}` : ''}` +
         (p && p.lossRp && c.lossRp ? ` vs ${monthShort(p.p)} ${fmtRp(p.lossRp)}` : '') + (c.worst ? `; selisih terbesar di ${c.worst.from} → ${c.worst.to}` : ''), priority: 'tinggi' };
       if (c || !F.worst || !F.steps.some(x => x.loss)) return null;
-      return { evidence: `kumulatif ${fmt(F.lossJjg, 0)} jjg (${fmt(F.lossPct, 0)}%) tidak sampai terjual${F.lossRp ? ` ≈ ${fmtRp(F.lossRp)}` : ''}; terbesar di ${F.worst.from} → ${F.worst.to}`, priority: 'tinggi' }; } },
+      return { evidence: `kumulatif ${fmt(F.lossJjg, 0)} jjg (${fmt(F.lossPct, 0)}%) belum tercatat sampai terjual${F.lossRp ? ` ≈ ${fmtRp(F.lossRp)}` : ''}; terbesar di ${F.worst.from} → ${F.worst.to}`, priority: 'tinggi' }; } },
 
   { code: 'R19', title: 'Samakan pencatatan panen dan muat',
     action: 'Pastikan setiap janjang dicatat saat panen di TPH; janjang dimuat yang melebihi panen menandakan pencatatan panen kurang atau restan yang tidak tercatat.',
     signals: 'Janjang dimuat/terjual lebih besar dari janjang dipanen; jjg dipanen berbeda dengan total janjang di tabel produksi.',
     topics: ['alurjjg', 'anomali'],
     when: d => { const F = d.flow; if (!F) return null;
-      if (F.overSold) return { evidence: `janjang terjual ${fmt(F.overSoldPct, 1)}% lebih banyak dari janjang dipanen; kebocoran tidak terukur`, priority: 'tinggi' };
+      if (F.overSold) return { evidence: `janjang terjual ${fmt(F.overSoldPct, 1)}% lebih banyak dari janjang dipanen; input panen belum lengkap`, priority: 'tinggi' };
       const ex = F.steps.find(x => x.excess);
       if (ex) return { evidence: `janjang ${ex.to.toLowerCase()} melebihi ${ex.from.toLowerCase()} ${fmt(-ex.gap, 0)} jjg (${fmt(-ex.pct, 1)}%)`, priority: 'sedang' };
       return F.panenVsTotal > 2 ? { evidence: `jjg dipanen berbeda ${fmt(F.panenVsTotal, 0)}% dari total janjang tabel produksi`, priority: 'sedang' } : null; } },
 
-  { code: 'R20', title: 'Wajibkan timbang setiap janjang terjual',
-    action: 'Setiap penjualan dicatat jumlah janjang DAN beratnya (tiket timbang); penjualan tanpa berat tidak diterima di pembukuan.',
-    signals: 'Ada janjang terjual tanpa catatan berat dalam porsi berarti.',
+  { code: 'R20', title: 'Input data penjualan setiap trip',
+    action: 'Input berat dari tiket timbang PKS/agen untuk setiap trip di hari yang sama; admin mengecek tiap minggu trip yang belum ada data penjualannya.',
+    signals: 'Ada janjang yang sudah keluar kebun tetapi data penjualannya (berat) belum diinput dalam porsi berarti.',
     topics: ['tanpaberat', 'bjr'],
     when: d => { const N = d.noWeight; return N && N.share > DECK_CONFIG.THRESHOLDS.NOWEIGHT_PCT
-      ? { evidence: `${fmt(N.share, 0)}% janjang terjual tanpa berat (${fmt(N.nwSum, 0)} jjg${N.rpSum ? ` ≈ ${fmtRp(N.rpSum)}` : ''})`, priority: N.share > 20 ? 'tinggi' : 'sedang' } : null; } },
+      ? { evidence: `data penjualan ${fmt(N.share, 0)}% janjang belum diinput (${fmt(N.nwSum, 0)} jjg${N.rpSum ? ` ≈ ${fmtRp(N.rpSum)}` : ''})`, priority: N.share > 20 ? 'tinggi' : 'sedang' } : null; } },
 
   { code: 'R21', title: 'Telusuri blok yang tidak tercatat menjual',
     action: 'Cek per blok apakah janjang dipanen, tertinggal di TPH, atau dijual tanpa dicatat blok asalnya; tetapkan pengawasan blok tersebut.',
@@ -230,10 +230,20 @@ const RECO_CATALOG = [
     when: d => { const U = d.upkeepAnalysis; if (!U) return null;
       const s = U.spikes[0], ms = U.monthSpikes[0], x = U.crossMismatch[0];
       const inRep = s && U.cur && mkey(s.p) === mkey(U.cur.p);
-      if (s) return { evidence: `${s.name} ${monthLong(s.p)} ${fmtRp(s.cost)}, ${fmt(s.ratio, 0)}× median bulan lain (${fmtRp(s.median)})${U.spikes.length > 1 ? `; ${U.spikes.length - 1} lonjakan lain` : ''}`, priority: inRep || s.cost > 1e8 ? 'tinggi' : 'sedang' };
+      if (s) return { evidence: `${s.name} ${monthLong(s.p)} ${fmtRp(s.cost)}, ${s.ratio > 100 ? 'lebih dari 100×' : `${fmt(s.ratio, 0)}×`} median bulan lain (${fmtRp(s.median)})${U.spikes.length > 1 ? `; ${U.spikes.length - 1} lonjakan lain` : ''}`, priority: inRep || s.cost > 1e8 ? 'tinggi' : 'sedang' };
       if (ms) return { evidence: `total upkeep ${monthLong(ms.p)} ${fmtRp(ms.total)}${ms.perHa ? ` (${fmtRp(ms.perHa)}/ha)` : ''}`, priority: 'tinggi' };
       if (x) return { evidence: `total upkeep ${monthShort(x.p)} ${fmtRp(x.upkeep)} vs biaya perawatan di tabel biaya ${fmtRp(x.biaya)}`, priority: 'sedang' };
       return null; } },
+
+  { code: 'R26', title: 'Gunakan RKH untuk memantau rotasi panen',
+    action: 'Isi Rencana Kerja Harian (RKH) di KebunPRO setiap hari: ancak/blok yang akan dipanen dan dirawat. Bandingkan dengan panen aktual agar rotasi 7–10 hari per ancak terpantau dan blok yang terlewat terlihat.',
+    signals: 'RKH belum diisi atau jarang diisi, sehingga rencana kerja belum bisa dibandingkan dengan rotasi panen di lapangan; produksi atau janjang per blok naik-turun.',
+    topics: ['blokprod', 'jjg', 'produksi'],
+    when: d => { const R = d.rkh;
+      if (R && R.filled && R.coverage >= DECK_CONFIG.THRESHOLDS.RKH_MIN_COVERAGE) return null;
+      const rot = d.blockProd && d.blockProd.rotasiRows && d.blockProd.rotasiRows.length ? `; ${d.blockProd.rotasiRows.length} blok jarang dipanen` : '';
+      return { evidence: (R && R.filled ? `RKH baru diisi ${fmt(R.coverage * 100, 0)}% bulan data` : 'RKH belum diisi') +
+        `, rencana kerja belum bisa dibandingkan dengan rotasi panen aktual${rot}`, priority: 'tinggi' }; } },
 
   { code: 'R17', title: 'Pertahankan praktik yang sudah baik',
     action: 'Dokumentasikan praktik panen dan perawatan yang membuat kinerja naik agar tetap dijalankan.',

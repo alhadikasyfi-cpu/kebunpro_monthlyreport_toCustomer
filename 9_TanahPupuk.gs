@@ -381,7 +381,7 @@ function buildFertilizerStatus(d) {
   const pct = v => `${fmt(v * 100, 0)}%`;
   // Produktivitas per tahun dari < MIN_MONTHS_ANNUAL bulan data dipengaruhi musim panen -> hanya pendukung, bukan dasar kesimpulan
   const shortM = !!(M && M.nMonths < DECK_CONFIG.THRESHOLDS.MIN_MONTHS_ANNUAL);
-  // BJR hanya dari janjang yang ditimbang: bila sebagian besar janjang terjual tanpa berat, sampelnya terlalu kecil
+  // BJR hanya dari janjang yang ditimbang: bila data penjualan sebagian besar janjang belum diinput, sampelnya terlalu kecil
   const nwShare = d.noWeight ? d.noWeight.share : 0;
   const bjrOk = !!(M && M.achBjr) && !shortM && nwShare <= DECK_CONFIG.THRESHOLDS.BJR_MAX_NOWEIGHT_PCT;
   // 1. Hasil vs standar Marihat untuk umur yang sama (kurang hara adalah salah satu penyebab umum hasil rendah)
