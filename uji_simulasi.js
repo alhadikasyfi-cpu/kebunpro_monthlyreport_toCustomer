@@ -652,6 +652,12 @@ const rk26 = run2(`RECO_CATALOG.find(r => r.code === 'R26').when(dRk)`);
 ok(ctx2.dRk.rkh.cur.done === 30 / 45 && /RKH September 2026 baru selesai 30 dari 45 yang dibuat \(67%\)/.test(run2('describeRkh(dRk)')) && rk26 && rk26.priority === 'sedang' && /selesai 30 dari 45/.test(rk26.evidence) &&
    run2('(function(){ const P = planDeck(Object.assign(dRk, {})); const t = P.appendix.find(x => x.id === "rkh"); return !!t && t.mainOf.id === "m_catat"; })()'),
   `RKH terisi tetapi baru selesai 67%: temuan + R26 (${rk26 && rk26.evidence})`);
+// Legenda komposisi biaya selalu lengkap (pola Mahato Okt: Panen 21%, Muat 4%, Perawatan 74% -> legenda Perawatan dulu tidak tampil)
+ctx2.csM = { p: { y: 2026, m: 9 }, total: 57.86e6, revenue: 1.19e9, profit: 1.13e9, caption: '', rows: [
+  { name: 'Panen', cur: 12.2e6, kind: 'part', color: '#007200' }, { name: 'Muat', cur: 2.59e6, kind: 'part', color: '#595959' }, { name: 'Perawatan', cur: 43.08e6, kind: 'part', color: '#fcd102' }] };
+const lgM = run2(`(function(){ RUN_WARNINGS = []; const b = new SlideBatch('pg','lg'); drawMoneySlide(b, csM, []); return { req: JSON.stringify(b.req), texts: b.texts }; })()`);
+ok(/Panen Rp12,2 juta \(21%\)/.test(lgM.req) && /Muat Rp2,6 juta \(4%\)/.test(lgM.req) && /Perawatan Rp43,1 juta \(74%\)/.test(lgM.req) &&
+   lgM.texts.every(t => t.y + t.h <= CSA.top + CSA.height + 1 && t.x + t.w <= CSA.left + CSA.width + 1), 'legenda komposisi biaya selalu lengkap (Perawatan 74% tampil), pindah baris bila tidak muat');
 // Format data terbaru: tonase per blok ("19.38ton"), blok tanpa angka janjang, upkeep per blok ("KODE; biaya; blok")
 const pbN = run2(`JSON.stringify(parseBlocks('F1, 5.27 ha, 2007, -, 342, 19.38ton; NEW BP2, 6.33 ha, 2025, Mineral, 0.15ton; A2, 15 ha, 1998, Podsolik Merah Kuning, 200'))`);
 ok(pbN === JSON.stringify([{ name: 'F1', ha: 5.27, year: 2007, soil: null, jjg: 342, ton: 19.38 }, { name: 'NEW BP2', ha: 6.33, year: 2025, soil: 'Mineral', jjg: null, ton: 0.15 },

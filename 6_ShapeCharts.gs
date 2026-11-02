@@ -696,20 +696,21 @@ function drawMoneySlide(b, cs, laba) {
       if (estWidth(lab, T.CAPTION, true) + 6 <= wd) b.label(lab, x + wd / 2, yy + 3, wd, { size: T.CAPTION, weight: W.HEAVY, color: s.dark ? C.INK : C.ON_GREEN, height: 14 });
       x += wd;
     });
-    let lx = A.left;
+    // Legenda SELALU lengkap: setiap warna batang punya keterangan; bila tidak muat satu baris, pindah ke baris berikutnya
+    let lx = A.left, ly = yy + 24;
     segs.forEach(s => {
       const lab = `${s.name} ${s.missing ? 'belum diinput' : `${fmtRpShort(s.v)} (${fmt((s.v / tot) * 100, 0)}%)`}`;
       const lw = estWidth(lab, T.CAPTION, true) + 12;
-      if (lx + 12 + lw > A.left + A.width) return;
-      b.rect(lx, yy + 27, 8, 8, s.missing ? C.NEUTRAL : s.color);
-      b.label(lab, lx + 11, yy + 24, lw, { align: 'START', color: s.missing ? C.DANGER : C.INK, size: T.CAPTION, weight: W.STRONG });
+      if (lx > A.left && lx + 11 + lw > A.left + A.width) { lx = A.left; ly += 14; }
+      b.rect(lx, ly + 3, 8, 8, s.missing ? C.NEUTRAL : s.color);
+      b.label(lab, lx + 11, ly, lw, { align: 'START', color: s.missing ? C.DANGER : C.INK, size: T.CAPTION, weight: W.STRONG });
       lx += 11 + lw + 10;
     });
+    return ly - (yy + 24);   // tinggi tambahan bila legenda dua baris
   };
   if (cs.revenue && cs.profit !== null && cs.revenue > 0) {
     head(`Pendapatan ${mon}: ${fmtRpShort(cs.revenue)}`, y);
-    bar([{ name: 'Biaya pekerja', v: cs.total, color: C.WARNING }, { name: cs.profit >= 0 ? 'Laba kotor' : 'Rugi', v: Math.max(0, cs.profit), color: cs.profit >= 0 ? C.GREEN : C.DANGER }], y + 18);
-    y += 18 + 44;
+    y += 18 + 44 + bar([{ name: 'Biaya pekerja', v: cs.total, color: C.WARNING }, { name: cs.profit >= 0 ? 'Laba kotor' : 'Rugi', v: Math.max(0, cs.profit), color: cs.profit >= 0 ? C.GREEN : C.DANGER }], y + 18);
   } else {
     b.text(`Pendapatan ${mon} belum tercatat, sehingga laba kotor belum dapat dihitung.`, A.left, y, A.width, 14, { size: T.BODY, weight: W.STRONG, color: C.DANGER, align: 'START', valign: 'TOP', noGroup: true, nowrap: true });
     y += 24;
@@ -718,8 +719,7 @@ function drawMoneySlide(b, cs, laba) {
   const parts = cs.rows.filter(r => r.kind === 'part');
   if (!parts.length) return;
   head(`Biaya pekerja ${mon}: ${fmtRpShort(cs.total)}`, y);
-  bar(parts.map(r => ({ name: r.name, v: r.missing ? 0 : r.cur, color: r.color, dark: r.color === C.YELLOW || r.color === C.NEUTRAL, missing: r.missing })), y + 18);
-  y += 18 + 44;
+  y += 18 + 44 + bar(parts.map(r => ({ name: r.name, v: r.missing ? 0 : r.cur, color: r.color, dark: r.color === C.YELLOW || r.color === C.NEUTRAL, missing: r.missing })), y + 18);
   if (cs.caption && y < A.top + A.height - 10) b.text(cs.caption, A.left, y, A.width, A.top + A.height - y, { size: T.CAPTION, color: C.MUTED, align: 'START', valign: 'TOP', lineSpacing: 120, noGroup: true });
 }
 
