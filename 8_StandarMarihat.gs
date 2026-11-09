@@ -122,6 +122,7 @@ function buildMarihat(d) {
   }).filter(Boolean);
 
   return {
+    period: ton.length > 1 ? `${ton[0].label}–${ton[ton.length - 1].label}` : ton[0].label, bjrMonths: d.bjrMonths || null,
     cls, area, areaKnown, areaFromBlocks, zeroHa: B.zeroJjgHa || 0, reliable: nMonths >= DECK_CONFIG.THRESHOLDS.MIN_MONTHS_ANNUAL, nMonths, annualized: nMonths < 12, usePanen, soldTonYear,
     pot, potS1, realTonHa, realTonYear, potTonYear, realBjr, realRjt, realJjgHa,
     achTon: realTonHa / pot.ton, achBjr: realBjr ? realBjr / pot.rbt : null, achJjg: realJjgHa ? realJjgHa / pot.jjgHa : null, achRjt: realRjt ? realRjt / pot.rjt : null,
@@ -136,8 +137,8 @@ function describeMarihat(d) {
     `STANDAR MARIHAT (PPKS, Permentan 131/2013 Tabel 3), kelas lahan ${M.cls}${d.landClassAssumed ? ' (ASUMSI, kelas lahan tidak dicatat di sheet)' : ''}:`,
     M.areaFromBlocks ? `- Luas blok unik yang dipanen: ${fmt(M.area, 1)} ha (${fmt(M.areaKnown, 1)} ha dengan tahun tanam ≥ 3 tahun dipakai untuk potensi)${M.zeroHa ? `; ${fmt(M.zeroHa, 1)} ha blok yang janjangnya 0 di semua bulan tidak dihitung` : ''}.`
       : `- PERLU DICEK: total luas di daftar blok lebih kecil dari luas panen bulanan; perhitungan memakai median luas panen ${fmt(M.area, 1)} ha. Lengkapi daftar blok.`,
-    M.usePanen ? `- Dasar realisasi: estimasi produksi panen = janjang dipanen × BJR berbasis janjang terjual (${fmt(M.realBjr, 1)} kg), karena tonase di sheet adalah ton TERJUAL. TBS terjual setahun ${fmt(M.soldTonYear, 0)} ton.` : '',
-    `- Realisasi produktivitas: ${fmt(M.realTonHa, 1)} ton TBS/ha/tahun (${M.annualized ? `disetahunkan dari ${M.nMonths} bulan` : `${M.nMonths} bulan`}) vs potensi ${fmt(M.pot.ton, 1)} ton/ha/tahun → pencapaian ${fmtPct(M.achTon * 100, 0)} (potensi kelas S1: ${fmt(M.potS1, 1)}).`,
+    M.usePanen ? `- Dasar realisasi: estimasi produksi panen = janjang dipanen × BJR berbasis janjang terjual (${fmt(M.realBjr, 1)} kg)${M.bjrMonths && M.bjrMonths.length ? `, BJR dari bulan ${M.bjrMonths.join(', ')}` : ''}, karena tonase di sheet adalah ton TERJUAL. TBS terjual setahun ${fmt(M.soldTonYear, 0)} ton.` : '',
+    `- Realisasi produktivitas: ${fmt(M.realTonHa, 1)} ton TBS/ha/tahun (rata-rata ${M.period}${M.annualized ? `, disetahunkan dari ${M.nMonths} bulan` : ''}; BUKAN angka satu bulan laporan saja) vs potensi ${fmt(M.pot.ton, 1)} ton/ha/tahun → pencapaian ${fmtPct(M.achTon * 100, 0)} (potensi kelas S1: ${fmt(M.potS1, 1)}).`,
     `- BJR realisasi (${M.usePanen ? 'tonase terjual ÷ janjang terjual' : 'tonase ÷ janjang'}): ${fmt(M.realBjr, 1)} kg vs standar ${fmt(M.pot.rbt, 1)} kg → ${M.achBjr ? fmtPct(M.achBjr * 100, 0) : '-'}.`,
     M.realJjgHa ? `- Janjang per hektare per tahun: ${fmt(M.realJjgHa, 0)} vs standar ${fmt(M.pot.jjgHa, 0)} → ${fmtPct(M.achJjg * 100, 0)} (produktivitas = jumlah janjang/ha × BJR, jadi kekurangan hasil bisa dipilah: tandan sedikit atau tandan ringan).` : '',
     M.realRjt ? `- Janjang per pokok per tahun: ${fmt(M.realRjt, 1)} vs standar ${fmt(M.pot.rjt, 1)} → ${fmtPct(M.achRjt * 100, 0)} (${d.sph} pokok/ha tercatat di sheet).` : '',

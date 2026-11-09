@@ -439,7 +439,10 @@ function getSheetData(sheet) {
   const soldDen = d.saleJjg.some(x => x.value) ? d.saleJjg : (d.flowSoldWeighted || d.flowSold);
   d.bjrDenominator = soldDen === d.saleJjg ? 'janjang terjual yang ada beratnya' : 'janjang terjual (tabel alur)';
   if (DECK_CONFIG.TONASE_BASIS === 'terjual' && soldDen.length) {
-    const ms = d.produksi.filter(x => x.value !== null && valAt(soldDen, x.p));
+    const msAll = d.produksi.filter(x => x.value !== null && valAt(soldDen, x.p));
+    const ms = bjrBaseMonths(d, soldDen);
+    if (ms.length < msAll.length) d.zeroFixes.push(`BJR dihitung dari ${ms.length} dari ${msAll.length} bulan (${ms.map(x => x.label).join(', ')}); bulan lain janjang berberatnya terlalu sedikit dibanding janjang dipanen atau BJR bulanannya tidak wajar`);
+    d.bjrMonths = ms.map(x => x.label);
     const tS = ms.reduce((a, x) => a + x.value, 0), jS = ms.reduce((a, x) => a + valAt(soldDen, x.p), 0);
     if (jS) d.bjrSoldCum = (tS * 1000) / jS;
     if (d.bjrSoldCum && d.bjrSoldCum > DECK_CONFIG.THRESHOLDS.BJR_MAX_KG) {
@@ -1699,4 +1702,19 @@ function describeFlow(d) {
     'angka penjualan belum diinput memakai tabel utama, corong memakai tabel alur. Samakan pencatatan kedua tabel.');
   F.steps.filter(s => s.excess).forEach(s => L.push(`PERLU DICEK: janjang ${s.to.toLowerCase()} melebihi ${s.from.toLowerCase()} ${fmt(-s.gap, 0)} jjg; cek pencatatan panen dan restan awal periode.`));
   return L.join('\n');
+}
+
+/**
+ * Bulan dasar BJR kumulatif: BJR bulanan wajar (3–BJR_MAX kg) DAN janjang berberat ≥ BJR_MIN_COVER dari janjang dipanen bulan itu.
+ * Bulan yang tonasenya terisi tetapi janjang berberatnya sangat sedikit (mis. 46 ton dari 70 janjang) membuat BJR melambung,
+ * lalu estimasi produksi panen dan pencapaian Marihat ikut terlalu tinggi. Bila tidak ada bulan yang memenuhi cakupan,
+ * dipakai bulan dengan BJR wajar saja.
+ */
+function bjrBaseMonths(d, soldDen) {
+  const T = DECK_CONFIG.THRESHOLDS;
+  const all = d.produksi.filter(x => x.value !== null && valAt(soldDen, x.p));
+  const bjrOk = x => { const v = (x.value * 1000) / valAt(soldDen, x.p); return v >= 3 && v <= T.BJR_MAX_KG; };
+  const coverOk = x => { const h = valAt(d.totalJjg || [], x.p); return !h || valAt(soldDen, x.p) / h >= T.BJR_MIN_COVER; };
+  const cover = all.filter(x => bjrOk(x) && coverOk(x));
+  return cover.length ? cover : all.filter(bjrOk);
 }

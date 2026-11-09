@@ -357,7 +357,7 @@ const OWNER_KPIS = {
     const M = d.marihat;
     if (!M) return null;
     return { name: `Vs standar Marihat ${M.cls}`, value: fmtPct(M.achTon * 100, 0), unit: '',
-             note: `${fmt(M.realTonHa, 1)} vs potensi ${fmt(M.pot.ton, 1)} ton/ha/tahun${M.reliable === false ? ` · data ${M.nMonths} bln, indikatif` : ''}`,
+             note: `Rata-rata ${M.period}: ${fmt(M.realTonHa, 1)} vs potensi ${fmt(M.pot.ton, 1)} t/ha/th${M.reliable === false ? ' · indikatif' : ''}`,
              tone: M.reliable === false ? 'neutral' : M.achTon >= 0.9 ? 'good' : 'bad' };
   },
   // Alur panen -> muat/jual yang tidak tercatat, BULAN LAPORAN (bukan kumulatif), dibandingkan bulan sebelumnya.

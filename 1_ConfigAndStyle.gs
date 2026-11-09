@@ -131,6 +131,7 @@ const DECK_CONFIG = {
     UPKEEP_SPIKE_MIN_RP: 5000000, //   ...dan selisihnya > Rp5 juta (lonjakan kecil diabaikan)
     UPKEEP_MAX_RP_JJG: 100000,  // tanpa luas: upkeep > Rp100 ribu per janjang dipanen dalam sebulan tidak wajar
     UPKEEP_MAX_RP_HA_MONTH: 3000000, // upkeep > Rp3 juta/ha dalam satu bulan tidak wajar -> kemungkinan salah input
+    BJR_MIN_COVER: 0.5,         // bulan dasar BJR: janjang terjual berberat minimal 50% dari janjang dipanen bulan itu
     BJR_MAX_KG: 35,             // BJR > 35 kg tidak wajar (standar Marihat tertinggi ±35 kg) -> salah catat/sampel timbang terlalu kecil
     KPI_NOWEIGHT_PCT: 20,       // > 20% janjang bulan itu belum diinput penjualannya -> KPI tonase/yield tidak dibandingkan naik/turun (tonase kurang tercatat)
     BJR_MAX_NOWEIGHT_PCT: 50,   // > 50% janjang belum diinput penjualannya -> BJR dari sampel terlalu kecil, tidak jadi dasar status pupuk

@@ -691,4 +691,14 @@ ok(/data penjualannya \(berat\/tiket timbang\) belum diinput/.test(run2('describ
    (!P2.appendix.find(t => t.id === 'blokunsale') || P2.appendix.find(t => t.id === 'blokunsale').title === 'Blok yang Penjualannya Belum Tercatat') &&
    !/blok tanpa penjualan|tidak tercatat menjual/i.test(pk2.text), 'lampiran memakai istilah baru (penjualan belum diinput; blok yang penjualannya belum tercatat)');
 
+// BJR dasar Marihat: bulan dengan tonase terisi tetapi janjang berberat sangat sedikit (kasus Julfi: 46 ton dari 70 janjang) tidak dipakai
+const bjrM = run2(`(function(){ const P = m => ({ y: 2026, m });
+  const d = { produksi: [{p:P(5),label:'Jun',value:46.3},{p:P(6),label:'Jul',value:33.7},{p:P(8),label:'Sep',value:46.4},{p:P(9),label:'Okt',value:52.7}],
+              totalJjg: [{p:P(5),value:2332},{p:P(6),value:7339},{p:P(8),value:5664},{p:P(9),value:4190}] };
+  const sold = [{p:P(5),value:70},{p:P(6),value:182},{p:P(8),value:1623},{p:P(9),value:4389}];
+  const ms = bjrBaseMonths(d, sold);
+  const d2 = { produksi: d.produksi.slice(0, 2), totalJjg: [] };
+  return { a: ms.map(x => x.label).join(), b: bjrBaseMonths(d2, sold).length }; })()`);
+ok(bjrM.a === 'Okt' && bjrM.b === 0, `BJR untuk pencapaian Marihat hanya dari bulan yang janjang berberatnya cukup (${bjrM.a}); bulan dengan BJR tidak wajar dibuang`);
+
 console.log(process.exitCode ? '\nADA YANG GAGAL' : '\nSEMUA UJI LOLOS');
