@@ -561,8 +561,8 @@ const bpLate = run2(`(function(){ const b = D2.blocks.blocks.find(x => x.name ==
 ok(bpLate.monthsOf === 1, 'blok yang baru muncul di bulan terakhir disetahunkan dari 1 bulan, bukan seluruh periode');
 const mVL = run2(`(function(){ const b = D2.blocks.blocks.find(x => x.name === 'A2'), ha = b.ha, js = b.jjgSum; b.ha = 300; b.jjgSum = 10;
   const M = buildMarihat(D2); b.ha = ha; b.jjgSum = js; return M; })()`);
-ok(mVL.veryLow && mVL.veryLow.blocks[0].name === 'A2' && mVL.veryLow.achTon > mVL.achTon,
-  `blok 300 ha hampir tanpa janjang: pencapaian ${Math.round(mVL.achTon * 100)}% dengan blok itu, ${Math.round(mVL.veryLow.achTon * 100)}% tanpa blok itu (keduanya dilaporkan)`);
+ok(mVL.veryLow && mVL.veryLow.blocks[0].name === 'A2' && isFinite(mVL.veryLow.achTon) && Math.abs(mVL.achTon - mVL.realTonHa / mVL.potMon.ton) < 1e-9,
+  `blok 300 ha hampir tanpa janjang tetap ditandai; pencapaian ${Math.round(mVL.achTon * 100)}% memakai yield sheet (luas panen), tidak terdistorsi luas blok`);
 
 // 11. Produksi per blok (janjang dipanen per blok) + kaitan dengan status pupuk
 const pb = run2(`parseBlocks('F10, 3.39 ha, 2012, -, 342; B8, 1.49 ha, 2017, -; Blok Pasar Bingung, 5 ha, 2009, Gambut, 1084')`);
@@ -706,5 +706,9 @@ const MM = run2(`(function(){ const M = D2.marihat; if (!M) return null; return 
   unit: Math.abs(M.potMon.ton - M.pot.ton / 12) < 1e-9 && Math.abs(M.achTon - M.realTonHa / M.potMon.ton) < 1e-9, txt: describeMarihat(D2) }; })()`);
 ok(MM && MM.same && MM.unit && /ton TBS\/ha\/bulan/.test(MM.txt) && !/ton TBS\/ha\/tahun|ton\/ha\/tahun/.test(MM.txt),
   'pencapaian Marihat dihitung untuk bulan laporan saja, satuan per bulan (potensi tahunan ÷ 12)');
+
+// Pembanding Marihat = yield di sheet bulan itu (sama dengan yang dilihat owner), bukan estimasi dari janjang dipanen
+const MY = run2(`(function(){ const M = D2.marihat; return { y: valAt(D2.yield, M.month), r: M.realTonHa, b: M.basis }; })()`);
+ok(MY.b === 'yield' && MY.y !== null && Math.abs(MY.y - MY.r) < 1e-9, `pembanding Marihat memakai yield sheet bulan itu (${MY.r})`);
 
 console.log(process.exitCode ? '\nADA YANG GAGAL' : '\nSEMUA UJI LOLOS');

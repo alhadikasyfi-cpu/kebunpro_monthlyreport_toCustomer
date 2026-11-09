@@ -127,34 +127,39 @@ function buildMarihat(d) {
     achTon: realTonHa / pot.ton, achJjg: realJjgHa ? realJjgHa / pot.jjgHa : null,
     gapTon, gapRp: avgPrice ? gapTon * 1000 * avgPrice : null, bjr: realBjr };
 
-  // BULAN LAPORAN: produksi bulan itu per ha dibandingkan potensi Marihat bulanan (= potensi tahunan ÷ 12).
-  // Bila bulan laporan belum ada datanya, dipakai bulan terakhir yang ada (stale).
-  const tonSer = usePanen ? d.produksiPanen : d.produksi, jjgSer = usePanen ? d.flowPanen : d.totalJjg;
-  const withVal = tonSer.filter(x => x.value !== null && mkey(x.p) !== d.rampMonth);
+  // BULAN LAPORAN: YIELD DI SHEET (TBS terjual ÷ luas panen) bulan itu dibandingkan potensi Marihat bulanan (= tahunan ÷ 12),
+  // agar angka yang dibandingkan sama dengan yield yang dilihat owner. Selisih terjual vs dipanen dijelaskan di slide alur janjang.
+  // Bila bulan laporan belum ada yield-nya, dipakai bulan terakhir yang ada (stale). Tanpa kolom yield: TBS terjual ÷ luas.
+  const lpAt = p => valAt(d.luasPanen || [], p) || area;
+  const ySer = (d.yield || []).some(x => x.value !== null) ? d.yield
+    : d.produksi.map(x => ({ p: x.p, label: x.label, value: x.value !== null ? x.value / lpAt(x.p) : null }));
+  const withVal = ySer.filter(x => x.value !== null && mkey(x.p) !== d.rampMonth);
   const atRep = d.reportP ? withVal.find(x => mkey(x.p) === mkey(d.reportP)) : null;
   const mPt = atRep || withVal[withVal.length - 1];
-  const bjrMonQualified = d.bjrMonths && d.bjrMonths.indexOf(mPt.label) >= 0;
-  const bjrMonRaw = valAt(d.bjrSoldMonthly || [], mPt.p);
-  const bjrMon = usePanen ? (bjrMonQualified && bjrMonRaw ? bjrMonRaw : realBjr) : (() => { const j = valAt(jjgSer, mPt.p); return j ? (mPt.value * 1000) / j : null; })();
-  const jjgMon = valAt(jjgSer, mPt.p);
-  const monTon = usePanen && jjgMon && bjrMon ? (jjgMon * bjrMon) / 1000 : mPt.value;
+  const areaMon = lpAt(mPt.p);
+  const monTonHa = mPt.value;
+  const monTon = valAt(d.produksi, mPt.p) !== null ? valAt(d.produksi, mPt.p) : monTonHa * areaMon;
+  // BJR bulan itu dari penjualan yang ditimbang (tonase ÷ janjang terjual berberat); bila tidak ada, BJR kumulatif
+  const bjrMon = valAt(d.bjrSoldMonthly || [], mPt.p) || realBjr;
+  // Janjang/ha bulan itu: kolom jjg/ha di sheet (janjang terjual ÷ luas panen); selain itu diturunkan dari yield ÷ BJR
+  const monJjgHa = valAt(d.jjgHa || [], mPt.p) || (bjrMon ? (monTonHa * 1000) / bjrMon : null);
   const potMon = { ton: pot.ton / 12, jjgHa: pot.jjgHa / 12, rjt: pot.rjt / 12, rbt: pot.rbt };
-  const monTonHa = monTon / area, monJjgHa = jjgMon ? jjgMon / area : null;
-  const monPotTon = potMon.ton * area, monGapTon = Math.max(0, monPotTon - monTon);
+  const monPotTon = potMon.ton * areaMon, monGapTon = Math.max(0, monPotTon - monTon);
   const priceMon = valAt(d.hargaJual || [], mPt.p) || avgPrice;
-  const soldMon = usePanen ? valAt(d.produksi, mPt.p) : null;
+  const harvTon = usePanen ? valAt(d.produksiPanen, mPt.p) : null;
   if (veryLow && veryLow.achTon !== null) {
     const rest = known.filter(b => veryLowBlocks.indexOf(b) < 0), restHa = rest.reduce((s, b) => s + b.ha, 0);
     const potEx = rest.reduce((s, b) => s + b.ha * marihatAt(b.age, cls).ton, 0) / restHa;
-    veryLow.achTon = ((monTon / (area - lowHa)) / (potEx / 12));
+    // yield dibagi luas panen (bukan luas blok), jadi blok itu hanya memengaruhi potensi rata-rata menurut umur
+    veryLow.achTon = monTonHa / (potEx / 12);
   }
   const monRjt = monJjgHa && d.sph && !d.sphAssumed ? monJjgHa / d.sph : null;
 
   return {
     month: mPt.p, monthLabel: monthLong(mPt.p), stale: !atRep, bjrMonths: d.bjrMonths || null,
-    cls, area, areaKnown, areaFromBlocks, zeroHa: B.zeroJjgHa || 0, reliable: true, nMonths, usePanen,
+    cls, area, areaKnown, areaFromBlocks, zeroHa: B.zeroJjgHa || 0, reliable: true, nMonths, usePanen, basis: 'yield',
     pot, potMon, potS1, potS1Mon: potS1 / 12,
-    realTonHa: monTonHa, realTon: monTon, potTonMon: monPotTon, soldTon: soldMon, realBjr: bjrMon, realJjgHa: monJjgHa, realRjt: monRjt,
+    areaMon, realTonHa: monTonHa, realTon: monTon, potTonMon: monPotTon, harvTon, realBjr: bjrMon, realJjgHa: monJjgHa, realRjt: monRjt,
     achTon: monTonHa / potMon.ton, achBjr: bjrMon ? bjrMon / pot.rbt : null, achJjg: monJjgHa ? monJjgHa / potMon.jjgHa : null, achRjt: monRjt ? monRjt / potMon.rjt : null,
     gapTon: monGapTon, gapRp: priceMon ? monGapTon * 1000 * priceMon : null, price: priceMon, avgPrice, byClass, veryLow, year
   };
@@ -169,7 +174,8 @@ function describeMarihat(d) {
       `Perbandingan HANYA untuk bulan ${mon}${M.stale ? ' (bulan laporan belum ada datanya; dipakai bulan terakhir yang tercatat)' : ''}, dalam satuan PER BULAN: potensi bulanan = potensi tahunan Marihat ÷ 12. Jangan menyajikan angka per tahun.`,
     M.areaFromBlocks ? `- Luas blok unik yang dipanen: ${fmt(M.area, 1)} ha (${fmt(M.areaKnown, 1)} ha dengan tahun tanam ≥ 3 tahun dipakai untuk potensi)${M.zeroHa ? `; ${fmt(M.zeroHa, 1)} ha blok yang janjangnya 0 di semua bulan tidak dihitung` : ''}.`
       : `- PERLU DICEK: total luas di daftar blok lebih kecil dari luas panen bulanan; perhitungan memakai median luas panen ${fmt(M.area, 1)} ha. Lengkapi daftar blok.`,
-    M.usePanen ? `- Dasar realisasi: estimasi produksi panen ${mon} = janjang dipanen × BJR ${fmt(M.realBjr, 1)} kg (tonase di sheet adalah ton TERJUAL; TBS terjual ${mon} ${M.soldTon !== null ? `${fmt(M.soldTon, 1)} ton` : '-'}).` : '',
+    `- Dasar realisasi: YIELD di sheet ${mon} = TBS terjual ${fmt(M.realTon, 1)} ton ÷ luas panen ${fmt(M.areaMon, 1)} ha (sama dengan yield yang dilihat owner). BJR dan janjang/ha juga dari penjualan bulan itu.` +
+      (M.harvTon ? ` Estimasi dari janjang dipanen ${fmt(M.harvTon, 1)} ton; selisih terjual vs dipanen dijelaskan di slide alur janjang, JANGAN dibahas di sini.` : ''),
     `- Produktivitas ${mon}: ${fmt(M.realTonHa, 2)} ton TBS/ha/bulan vs potensi ${fmt(M.potMon.ton, 2)} ton/ha/bulan → pencapaian ${fmtPct(M.achTon * 100, 0)} (potensi kelas S1: ${fmt(M.potS1Mon, 2)}).`,
     `- BJR ${mon}: ${fmt(M.realBjr, 1)} kg vs standar ${fmt(M.pot.rbt, 1)} kg → ${M.achBjr ? fmtPct(M.achBjr * 100, 0) : '-'}.`,
     M.realJjgHa ? `- Janjang per hektare ${mon}: ${fmt(M.realJjgHa, 0)} vs standar ${fmt(M.potMon.jjgHa, 0)} janjang/ha/bulan → ${fmtPct(M.achJjg * 100, 0)} (produktivitas = jumlah janjang/ha × BJR, jadi kekurangan hasil bisa dipilah: tandan sedikit atau tandan ringan).` : '',
@@ -178,7 +184,7 @@ function describeMarihat(d) {
     `- Potensi per kelas umur: ${M.byClass.map(c => `${c.name} ${fmt(c.ha, 1)} ha → ${fmt(c.ton / 12, 2)} t/ha/bulan, BJR ${fmt(c.rbt, 1)} kg`).join('; ')}.`,
     '- Catatan: potensi Marihat berlaku untuk bibit unggul D×P dengan pemeliharaan standar; bibit tidak unggul menurut pedoman yang sama hanya mencapai sekitar 50% potensi. Produksi bulanan naik-turun mengikuti musim panen, sedangkan potensi bulanan dibagi rata, jadi satu bulan di bawah/atas standar belum tentu tren.'
   ].filter(Boolean);
-  if (M.veryLow && M.veryLow.achTon) L.push(`PERLU DICEK: ${M.veryLow.blocks.length} blok (${fmt(M.veryLow.ha, 1)} ha, ${fmt(M.veryLow.ha / M.area * 100, 0)}% luas) hampir tidak menghasilkan janjang (< ${fmt(DECK_CONFIG.THRESHOLDS.BLOCK_VERY_LOW_ACH * 100, 0)}% standar), mis. ${M.veryLow.blocks.slice(0, 3).map(b => `${b.name} ${fmt(b.ha, 1)} ha`).join(', ')}. ` +
+  if (M.veryLow && M.veryLow.achTon && Math.abs(M.veryLow.achTon - M.achTon) >= 0.05) L.push(`PERLU DICEK: ${M.veryLow.blocks.length} blok (${fmt(M.veryLow.ha, 1)} ha, ${fmt(M.veryLow.ha / M.area * 100, 0)}% luas) hampir tidak menghasilkan janjang (< ${fmt(DECK_CONFIG.THRESHOLDS.BLOCK_VERY_LOW_ACH * 100, 0)}% standar), mis. ${M.veryLow.blocks.slice(0, 3).map(b => `${b.name} ${fmt(b.ha, 1)} ha`).join(', ')}. ` +
     `Tanpa blok ini pencapaian ${mon} ${fmtPct(M.veryLow.achTon * 100, 0)} (dengan blok ini ${fmtPct(M.achTon * 100, 0)}). Pastikan luasnya benar atau blok memang tidak dipanen; sebut kedua angka.`);
   if (M.achTon > 1.2) L.push(`PERLU DICEK: produktivitas ${mon} ${fmtPct(M.achTon * 100, 0)} dari standar Marihat bulanan (di atas potensi); periksa luas blok, tahun tanam, janjang dipanen, atau kelas lahan yang dipakai.`);
   if (M.achTon < 0.5) L.push(`PERLU DICEK: produktivitas ${mon} baru ${fmtPct(M.achTon * 100, 0)} dari standar Marihat bulanan untuk umur tanamannya (${fmt(M.realTonHa, 2)} vs ${fmt(M.potMon.ton, 2)} t/ha/bulan); selisih sekitar ${fmt(M.gapTon, 1)} ton pada bulan ini.`);

@@ -812,10 +812,9 @@ function buildTopics(d) {
       ['BJR (kg/janjang)', fmt(M.realBjr, 1), fmt(M.pot.rbt, 1), M.achBjr ? fmtPct(M.achBjr * 100, 0) : '-'],
       ['Janjang per ha per bulan', M.realJjgHa ? fmt(M.realJjgHa, 0) : '-', fmt(M.potMon.jjgHa, 0), M.achJjg ? fmtPct(M.achJjg * 100, 0) : '-'],
       ...(M.realRjt ? [['Janjang per pokok per bulan', fmt(M.realRjt, 2), fmt(M.potMon.rjt, 2), fmtPct(M.achRjt * 100, 0)]] : []),
-      [M.usePanen ? 'Produksi panen (ton, estimasi)' : 'Produksi (ton TBS)', fmt(M.realTon, 1), fmt(M.potTonMon, 1), fmtPct((M.realTon / M.potTonMon) * 100, 0)],
-      ...(M.usePanen && M.soldTon !== null ? [['TBS terjual (ton)', fmt(M.soldTon, 1), '-', fmtPct((M.soldTon / M.potTonMon) * 100, 0)]] : []),
+      ['TBS terjual (ton)', fmt(M.realTon, 1), fmt(M.potTonMon, 1), fmtPct((M.realTon / M.potTonMon) * 100, 0)],
       ['Selisih dari potensi', '-', `${fmt(M.gapTon, 1)} ton`, M.gapRp ? fmtRpShort(M.gapRp) : '-'],
-      [`Dasar: ${M.monthLabel}, ${fmt(M.area, 1)} ha blok; potensi bulanan = tahunan ÷ 12`, '', d.landClassAssumed ? 'kelas lahan diasumsikan' : '', '']
+      [`Dasar: yield ${M.monthLabel} di sheet (TBS terjual ÷ ${fmt(M.areaMon, 1)} ha luas panen); potensi = tahunan ÷ 12`, '', d.landClassAssumed ? 'kelas lahan diasumsikan' : '', '']
     ], { colWidths: [3.2, 1.6, 2.0, 1.6], fontSize: DECK_CONFIG.TYPE.TABLE_CELL, headerSize: DECK_CONFIG.TYPE.TABLE_HEADER, rowHeight: 25, headerHeight: 36, numCols: [1, 2, 3] })
   });
 
@@ -1283,8 +1282,8 @@ const MAIN_VISUAL = {
     // Tonase hanya dari penjualan yang sudah diinput: bila sebagian besar belum diinput, BJR tidak ditampilkan dan hasil diberi catatan
     const nw = d.noWeight ? d.noWeight.share : 0, T = DECK_CONFIG.THRESHOLDS;
     s.rows = s.rows.filter(r => !/blok|tanah/i.test(r.label) && !(r.label === 'BJR' && nw > T.BJR_MAX_NOWEIGHT_PCT));
-    s.caption = [d.marihat && d.marihat.usePanen ? `Produktivitas ${monthShort(d.marihat.month)} = janjang dipanen × BJR ${fmt(d.marihat.realBjr, 1)} kg; potensi bulanan = potensi tahunan Marihat ÷ 12.`
-        : nw > T.KPI_NOWEIGHT_PCT ? `Produktivitas dihitung dari penjualan yang sudah diinput; ${fmt(nw, 0)}% janjang belum diinput, sehingga hasil tampak lebih rendah.` : '',
+    s.caption = [d.marihat ? `Produktivitas = yield ${monthShort(d.marihat.month)} di sheet (TBS terjual ÷ luas panen); potensi bulanan = potensi tahunan Marihat ÷ 12.` : '',
+      nw > T.KPI_NOWEIGHT_PCT ? `${fmt(nw, 0)}% janjang penjualannya belum diinput, sehingga hasil tampak lebih rendah.` : '',
       ''].filter(Boolean).join(' ');
     if (!s.rows.some(r => r.cur !== null && r.cur !== undefined)) return null;
     return { summary: s, draw: b => drawCompareRows(b, s), desc: `grafik kesimpulan ${s.desc}`, line: summaryLine(s) };
