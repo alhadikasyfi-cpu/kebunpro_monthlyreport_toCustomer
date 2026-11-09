@@ -199,7 +199,7 @@ function buildSoilAnalytics(d) {
 
 /** Produksi kebun (ton TBS/ha/tahun) untuk neraca hara: realisasi (estimasi panen bila ada), selain itu tonase disetahunkan. */
 function yieldTonHaYear(d) {
-  if (d.marihat && d.marihat.realTonHa) return d.marihat.realTonHa;
+  if (d.marihat && d.marihat.year && d.marihat.year.tonHa) return d.marihat.year.tonHa;
   const s = seriesStats(d.produksi);
   const ha = d.blocks ? d.blocks.totalHa : null;
   return s && ha ? ((s.sum / s.n) * 12) / ha : null;
@@ -380,13 +380,14 @@ function buildFertilizerStatus(d) {
   const M = d.marihat, N = d.npk, S = d.soil, ev = [];
   const pct = v => `${fmt(v * 100, 0)}%`;
   // Produktivitas per tahun dari < MIN_MONTHS_ANNUAL bulan data dipengaruhi musim panen -> hanya pendukung, bukan dasar kesimpulan
-  const shortM = !!(M && M.nMonths < DECK_CONFIG.THRESHOLDS.MIN_MONTHS_ANNUAL);
+  // Pencapaian Marihat kini dibandingkan PER BULAN LAPORAN (potensi bulanan = tahunan ÷ 12), tidak bergantung panjang data
+  const shortM = false;
   // BJR hanya dari janjang yang ditimbang: bila data penjualan sebagian besar janjang belum diinput, sampelnya terlalu kecil
   const nwShare = d.noWeight ? d.noWeight.share : 0;
   const bjrOk = !!(M && M.achBjr) && !shortM && nwShare <= DECK_CONFIG.THRESHOLDS.BJR_MAX_NOWEIGHT_PCT;
   // 1. Hasil vs standar Marihat untuk umur yang sama (kurang hara adalah salah satu penyebab umum hasil rendah)
   if (M) {
-    ev.push({ indikator: 'Produktivitas', kebun: `${fmt(M.realTonHa, 1)} ton/ha/th`, acuan: `${fmt(M.pot.ton, 1)} (Marihat ${M.cls})`,
+    ev.push({ indikator: `Produktivitas ${monthShort(M.month)}`, kebun: `${fmt(M.realTonHa, 2)} ton/ha/bln`, acuan: `${fmt(M.potMon.ton, 2)} (Marihat ${M.cls})`,
       arti: (M.achTon < 0.8 ? `${pct(M.achTon)} dari potensi; bisa karena kurang hara` : `${pct(M.achTon)} dari potensi`) +
         (shortM ? `; data ${M.nMonths} bulan, indikatif` : ''),
       arah: M.achTon < 0.8 && !shortM ? 'kurang' : 'netral' });
@@ -394,7 +395,7 @@ function buildFertilizerStatus(d) {
       arti: (M.achBjr < 0.85 ? 'tandan ringan; terkait K dan Mg' : 'berat tandan wajar') +
         (!bjrOk ? (shortM ? `; data ${M.nMonths} bulan` : `; dari ${fmt(100 - nwShare, 0)}% janjang ditimbang`) + ', indikatif' : ''),
       arah: M.achBjr < 0.85 && bjrOk ? 'kurang' : 'netral' });
-    if (M.achJjg) ev.push({ indikator: 'Janjang per ha', kebun: `${fmt(M.realJjgHa, 0)}/tahun`, acuan: `${fmt(M.pot.jjgHa, 0)}/tahun`,
+    if (M.achJjg) ev.push({ indikator: 'Janjang per ha', kebun: `${fmt(M.realJjgHa, 0)}/bulan`, acuan: `${fmt(M.potMon.jjgHa, 0)}/bulan`,
       arti: (M.achJjg < 0.8 ? 'tandan sedikit; terkait N, K, dan rotasi panen' : 'jumlah tandan wajar') + (shortM ? '; indikatif' : ''),
       arah: M.achJjg < 0.8 && !shortM ? 'kurang' : 'netral' });
   }

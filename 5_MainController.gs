@@ -357,8 +357,9 @@ const OWNER_KPIS = {
     const M = d.marihat;
     if (!M) return null;
     return { name: `Vs standar Marihat ${M.cls}`, value: fmtPct(M.achTon * 100, 0), unit: '',
-             note: `Rata-rata ${M.period}: ${fmt(M.realTonHa, 1)} vs potensi ${fmt(M.pot.ton, 1)} t/ha/th${M.reliable === false ? ' · indikatif' : ''}`,
-             tone: M.reliable === false ? 'neutral' : M.achTon >= 0.9 ? 'good' : 'bad' };
+             note: M.stale ? `Data ${monthShort(M.month)}: ${fmt(M.realTonHa, 2)} vs potensi ${fmt(M.potMon.ton, 2)} t/ha/bln`
+                           : `${fmt(M.realTonHa, 2)} vs potensi ${fmt(M.potMon.ton, 2)} ton/ha/bulan`,
+             tone: M.stale ? 'neutral' : M.achTon >= 0.9 ? 'good' : 'bad' };
   },
   // Alur panen -> muat/jual yang tidak tercatat, BULAN LAPORAN (bukan kumulatif), dibandingkan bulan sebelumnya.
   // Umumnya karena data belum diinput, jadi disebut "belum tercatat", bukan kerugian.
@@ -803,18 +804,18 @@ function buildTopics(d) {
   const M = d.marihat;
   if (M) T.push({
     id: 'marihat', title: 'Pencapaian vs Standar Marihat',
-    visual: `tabel realisasi vs potensi standar Marihat (PPKS) kelas ${M.cls}: produktivitas ton/ha/tahun, BJR, janjang per ha, produksi setahun`,
+    visual: `tabel realisasi ${M.monthLabel} vs potensi bulanan standar Marihat (PPKS) kelas ${M.cls}: produktivitas ton/ha/bulan, BJR, janjang per ha per bulan, produksi bulan itu`,
     facts: describeMarihat(d),
-    fallback: `Produktivitas kebun ${fmt(M.realTonHa, 1)} ton TBS/ha/tahun, ${fmtPct(M.achTon * 100, 0)} dari potensi standar Marihat ${M.cls} sebesar ${fmt(M.pot.ton, 1)} ton untuk umur tanamannya. Selisihnya sekitar ${fmt(M.gapTon, 0)} ton per tahun${M.gapRp ? ` atau ${fmtRp(M.gapRp)}` : ''}.`,
+    fallback: `Produktivitas kebun ${M.monthLabel} ${fmt(M.realTonHa, 2)} ton TBS/ha, ${fmtPct(M.achTon * 100, 0)} dari potensi bulanan standar Marihat ${M.cls} sebesar ${fmt(M.potMon.ton, 2)} ton/ha untuk umur tanamannya. Selisihnya sekitar ${fmt(M.gapTon, 1)} ton pada bulan itu${M.gapRp ? ` atau ${fmtRp(M.gapRp)}` : ''}.`,
     draw: b => drawTable(b, ['Indikator', 'Realisasi', `Standar Marihat\nkelas ${M.cls}`, 'Pencapaian'], [
-      ['Produktivitas (ton TBS/ha/tahun)', fmt(M.realTonHa, 1), fmt(M.pot.ton, 1), fmtPct(M.achTon * 100, 0)],
+      ['Produktivitas (ton TBS/ha/bulan)', fmt(M.realTonHa, 2), fmt(M.potMon.ton, 2), fmtPct(M.achTon * 100, 0)],
       ['BJR (kg/janjang)', fmt(M.realBjr, 1), fmt(M.pot.rbt, 1), M.achBjr ? fmtPct(M.achBjr * 100, 0) : '-'],
-      ['Janjang per ha per tahun', M.realJjgHa ? fmt(M.realJjgHa, 0) : '-', fmt(M.pot.jjgHa, 0), M.achJjg ? fmtPct(M.achJjg * 100, 0) : '-'],
-      ...(M.realRjt ? [['Janjang per pokok per tahun', fmt(M.realRjt, 1), fmt(M.pot.rjt, 1), fmtPct(M.achRjt * 100, 0)]] : []),
-      [M.usePanen ? 'Produksi panen setahun (ton, estimasi)' : 'Produksi setahun (ton TBS)', fmt(M.realTonYear, 0), fmt(M.potTonYear, 0), fmtPct((M.realTonYear / M.potTonYear) * 100, 0)],
-      ...(M.usePanen ? [['TBS terjual setahun (ton)', fmt(M.soldTonYear, 0), '-', fmtPct((M.soldTonYear / M.potTonYear) * 100, 0)]] : []),
-      ['Potensi tambahan per tahun', '-', `${fmt(M.gapTon, 0)} ton`, M.gapRp ? fmtRpShort(M.gapRp) : '-'],
-      [`Dasar: ${fmt(M.area, 1)} ha blok${M.annualized ? `, disetahunkan dari ${M.nMonths} bln` : ''}`, '', d.landClassAssumed ? 'kelas lahan diasumsikan' : '', '']
+      ['Janjang per ha per bulan', M.realJjgHa ? fmt(M.realJjgHa, 0) : '-', fmt(M.potMon.jjgHa, 0), M.achJjg ? fmtPct(M.achJjg * 100, 0) : '-'],
+      ...(M.realRjt ? [['Janjang per pokok per bulan', fmt(M.realRjt, 2), fmt(M.potMon.rjt, 2), fmtPct(M.achRjt * 100, 0)]] : []),
+      [M.usePanen ? 'Produksi panen (ton, estimasi)' : 'Produksi (ton TBS)', fmt(M.realTon, 1), fmt(M.potTonMon, 1), fmtPct((M.realTon / M.potTonMon) * 100, 0)],
+      ...(M.usePanen && M.soldTon !== null ? [['TBS terjual (ton)', fmt(M.soldTon, 1), '-', fmtPct((M.soldTon / M.potTonMon) * 100, 0)]] : []),
+      ['Selisih dari potensi', '-', `${fmt(M.gapTon, 1)} ton`, M.gapRp ? fmtRpShort(M.gapRp) : '-'],
+      [`Dasar: ${M.monthLabel}, ${fmt(M.area, 1)} ha blok; potensi bulanan = tahunan ÷ 12`, '', d.landClassAssumed ? 'kelas lahan diasumsikan' : '', '']
     ], { colWidths: [3.2, 1.6, 2.0, 1.6], fontSize: DECK_CONFIG.TYPE.TABLE_CELL, headerSize: DECK_CONFIG.TYPE.TABLE_HEADER, rowHeight: 25, headerHeight: 36, numCols: [1, 2, 3] })
   });
 
@@ -1282,9 +1283,9 @@ const MAIN_VISUAL = {
     // Tonase hanya dari penjualan yang sudah diinput: bila sebagian besar belum diinput, BJR tidak ditampilkan dan hasil diberi catatan
     const nw = d.noWeight ? d.noWeight.share : 0, T = DECK_CONFIG.THRESHOLDS;
     s.rows = s.rows.filter(r => !/blok|tanah/i.test(r.label) && !(r.label === 'BJR' && nw > T.BJR_MAX_NOWEIGHT_PCT));
-    s.caption = [nw > T.KPI_NOWEIGHT_PCT ? `Produktivitas dihitung dari penjualan yang sudah diinput; ${fmt(nw, 0)}% janjang belum diinput, sehingga hasil tampak lebih rendah.` : '',
-      d.marihat && d.marihat.reliable === false ? `Data ${d.marihat.nMonths} bulan, angka per tahun masih indikatif.` : '',
-      d.blockProd && d.blockProd.gapRpTotal ? `Potensi yang belum tercapai ±${fmtRpShort(d.blockProd.gapRpTotal)}/tahun (rincian per blok di slide Blok Prioritas).` : ''].filter(Boolean).join(' ');
+    s.caption = [d.marihat && d.marihat.usePanen ? `Produktivitas ${monthShort(d.marihat.month)} = janjang dipanen × BJR ${fmt(d.marihat.realBjr, 1)} kg; potensi bulanan = potensi tahunan Marihat ÷ 12.`
+        : nw > T.KPI_NOWEIGHT_PCT ? `Produktivitas dihitung dari penjualan yang sudah diinput; ${fmt(nw, 0)}% janjang belum diinput, sehingga hasil tampak lebih rendah.` : '',
+      ''].filter(Boolean).join(' ');
     if (!s.rows.some(r => r.cur !== null && r.cur !== undefined)) return null;
     return { summary: s, draw: b => drawCompareRows(b, s), desc: `grafik kesimpulan ${s.desc}`, line: summaryLine(s) };
   },
@@ -1450,11 +1451,11 @@ const MAIN_SUMMARY = {
   m_penyebab: d => {
     const M = d.marihat, S = d.soil;
     if (M) return {
-      curLabel: 'Realisasi kebun', refLabel: `Standar Marihat ${M.cls} (umur yang sama)`,
+      curLabel: `Realisasi ${monthShort(M.month)}`, refLabel: `Standar Marihat ${M.cls} per bulan (umur yang sama)`,
       rows: [
-        { label: 'Produktivitas', unit: 'ton TBS/ha/tahun', cur: M.realTonHa, ref: M.pot.ton, f: v => fmt(v, 1), goodUp: true },
+        { label: 'Produktivitas', unit: 'ton TBS/ha/bulan', cur: M.realTonHa, ref: M.potMon.ton, f: v => fmt(v, 2), goodUp: true },
         { label: 'BJR', unit: 'kg per janjang', cur: M.realBjr, ref: M.pot.rbt, f: v => fmt(v, 1), goodUp: true },
-        { label: 'Janjang per ha', unit: 'janjang/ha/tahun', cur: M.realJjgHa, ref: M.pot.jjgHa, f: v => fmt(v, 0), goodUp: true },
+        { label: 'Janjang per ha', unit: 'janjang/ha/bulan', cur: M.realJjgHa, ref: M.potMon.jjgHa, f: v => fmt(v, 0), goodUp: true },
         // produksi per blok tersedia: porsi luas blok yang memenuhi standar janjang (lebih bermakna dari kelengkapan data tanah)
         d.blockProd ? { label: 'Luas blok sesuai standar', unit: `% luas, janjang ≥ ${fmt(DECK_CONFIG.THRESHOLDS.BLOCK_LOW_ACH * 100, 0)}% standar`, cur: 100 - d.blockProd.lowPct, ref: 100, f: v => `${fmt(v, 0)}%`, goodUp: true }
           : S ? { label: 'Data jenis tanah', unit: '% luas blok tercatat', cur: S.knownPct, ref: 100, f: v => `${fmt(v, 0)}%`, goodUp: true } : null
@@ -1543,7 +1544,6 @@ function dataHeadline(id, d) {
   };
   const S = d.soil, FZ = d.fertilizer;
   const penyebab = () => {
-    if (M && M.reliable === false) return [`Hasil ${pct(M.achTon)} dari standar (data ${M.nMonths} bulan)`];
     if (M && M.achTon < 0.9) {
       if (M.achBjr && (!M.achJjg || M.achBjr <= M.achJjg)) return [`Hasil rendah: BJR ${fmt(M.realBjr, 1)} kg, ${pct(M.achBjr)} dari standar`, `Hasil rendah: BJR ${pct(M.achBjr)} dari standar`];
       if (M.achJjg) return [`Hasil rendah: janjang per ha ${pct(M.achJjg)} dari standar`, `Hasil rendah: janjang/ha ${pct(M.achJjg)} standar`];
@@ -1584,8 +1584,7 @@ function dataHeadline(id, d) {
       return out; },
     blokunsale: () => (U && U.chronic.length ? [`${U.chronic.length} blok dipanen, penjualannya belum diinput`] : null),
     m_penyebab: penyebab,
-    marihat: () => (!M ? null : M.nMonths < T.MIN_MONTHS_ANNUAL ? [`Hasil ${pct(M.achTon)} dari standar (data ${M.nMonths} bulan)`]
-      : [`Hasil baru ${pct(M.achTon)} dari standar Marihat`]),
+    marihat: () => (!M ? null : [`Hasil ${monthShort(M.month)} ${pct(M.achTon)} dari standar Marihat`]),
     bjr: () => (M && M.achBjr ? [`BJR ${fmt(M.realBjr, 1)} kg, ${pct(M.achBjr)} dari standar umur`] : null),
     replanting: () => (B && B.replant.length ? [`${B.replant.length} blok (${fmt(B.replant.reduce((x, b) => x + b.ha, 0), 0)} ha) lewat umur ekonomis`] : null),
     blokprod: () => { const P = d.blockProd; if (!P) return null;

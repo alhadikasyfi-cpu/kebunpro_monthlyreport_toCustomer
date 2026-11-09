@@ -162,7 +162,7 @@ const acts = run(`attachProducts([{ code: 'R04' }, { code: 'R20' }, { code: 'R07
 ok(acts[0].product.map(x => x.name).join() === 'Uji Tanah Dokter Sawit,Uji Daun Dokter Sawit' && acts[1].product === null && acts[2].product === null && acts[3].product === null && !JSON.stringify(acts).includes('KebunPRO'), 'cadangan: R04 -> uji tanah + uji daun; KebunPRO tidak pernah disarankan');
 // KPI berpembanding
 const kd = run(`({ produksiActual: true, targets: { tbs: 250 }, produksi: [{p:{y:2026,m:7},value:210},{p:{y:2026,m:8},value:234.8}],
-  yield: [{p:{y:2026,m:7},value:1.1},{p:{y:2026,m:8},value:1.3}], bjr: [{p:{y:2026,m:7},value:7.0},{p:{y:2026,m:8},value:6.4}], bjrSoldCum: 6.4, marihat: { cls:'S3', pot:{ rbt:14.1, ton:28 }, achTon:0.29, realTonHa:8.1 },
+  yield: [{p:{y:2026,m:7},value:1.1},{p:{y:2026,m:8},value:1.3}], bjr: [{p:{y:2026,m:7},value:7.0},{p:{y:2026,m:8},value:6.4}], bjrSoldCum: 6.4, marihat: { cls:'S3', month:{y:2026,m:8}, monthLabel:'September 2026', pot:{ rbt:14.1, ton:28 }, potMon:{ rbt:14.1, ton:28/12, jjgHa:166, rjt:1 }, achTon:0.29, realTonHa:0.68 },
   revenueTotal: [{p:{y:2026,m:7},value:2.1e8},{p:{y:2026,m:8},value:2.75e8}], flow: { overSold:false, lossJjg: 9256, lossPct: 51.4, lossRp: 6.569e8,
     cur: { p:{y:2026,m:8}, overSold:false, lossJjg: 1500, lossPct: 20, lossRp: 6.0e7 }, prev: { p:{y:2026,m:7}, overSold:false, lossJjg: 900, lossPct: 12, lossRp: 4.0e7 } } })`);
 ctx.kd = kd; const kp = run('computeOwnerKpis(kd)');
@@ -364,7 +364,7 @@ ok(/^Status Pemupukan Kebun\|/.test(np2) && /STATUS PEMUPUKAN \(PESAN UTAMA/.tes
   `lampiran Status Pemupukan: ${FS2.label} (${FS2.reason}); bukti: ${FS2.evidence.map(e => e.indikator).join(', ')}`);
 // Status pemupukan dari data tiruan: kurang (hasil rendah), berlebih (dosis aktual), tidak ada indikasi, belum dapat dinilai
 const st = obj => { ctx2.dS = obj; return run2('buildFertilizerStatus(dS)'); };
-const Mlow = { nMonths: 12, achTon: 0.29, achBjr: 0.55, achJjg: 0.6, realTonHa: 8.1, pot: { ton: 28, rbt: 20, rjt: 10 }, realBjr: 11, realRjt: 6, cls: 'S3' };
+const Mlow = { nMonths: 12, month: { y: 2026, m: 8 }, monthLabel: 'September 2026', achTon: 0.29, achBjr: 0.55, achJjg: 0.6, realTonHa: 0.68, realJjgHa: 70, pot: { ton: 28, rbt: 20, rjt: 10, jjgHa: 1400 }, potMon: { ton: 28 / 12, rbt: 20, rjt: 10 / 12, jjgHa: 1400 / 12 }, realBjr: 11, realRjt: 0.5, cls: 'S3', year: { tonHa: 8.1 } };
 const Mok = Object.assign({}, Mlow, { achTon: 0.95, achBjr: 0.97, achRjt: 0.95 });
 const base = { hargaJual: [], revKg: [], upkeep: { headers: ['activity_group', 'total_upkeep_cost'], rows: [['Pemupukan', '25000000'], ['Panen', '10000000']] } };
 const sK = st(Object.assign({}, base, { marihat: Mlow })), sOk = st(Object.assign({}, base, { marihat: Mok })), sB = st(Object.assign({}, base, {}));
@@ -381,8 +381,8 @@ ok(/^Indikasi kurang pupuk: hasil 29% dari standar$/.test(run2('dataHeadline("pu
 // Data < 3 bulan: produktivitas disetahunkan hanya indikatif (tidak jadi dasar status), BJR tetap berlaku
 const sShort = st(Object.assign({}, base, { marihat: Object.assign({}, Mlow, { nMonths: 1, achBjr: 0.95 }) }));
 const sShortB = st(Object.assign({}, base, { marihat: Object.assign({}, Mlow, { nMonths: 1 }) }));
-ok(sShort.verdict === 'belum' && /indikatif/.test(sShort.evidence[0].arti) && sShortB.verdict === 'belum' && /data 1 bulan, indikatif/.test(sShortB.evidence.find(e => e.indikator === 'BJR').arti),
-  `data 1 bulan: hasil & BJR rendah -> "${sShortB.label}" (angka per tahun dan BJR satu bulan masih indikatif)`);
+ok(sShortB.verdict === 'kurang' && !/indikatif/.test(sShortB.evidence[0].arti) && /^Produktivitas Sep 26$/.test(sShortB.evidence[0].indikator) && /ton\/ha\/bln/.test(sShortB.evidence[0].kebun),
+  `data 1 bulan: Marihat dibandingkan per bulan laporan, jadi tetap dapat disimpulkan -> "${sShortB.label}" (${sShortB.evidence[0].kebun} vs ${sShortB.evidence[0].acuan})`);
 const sNw = st(Object.assign({}, base, { marihat: Object.assign({}, Mlow, { achTon: 0.95 }), noWeight: { share: 96 } }));
 const sBjr = st(Object.assign({}, base, { marihat: Object.assign({}, Mlow, { achTon: 0.95 }) }));
 ok(sNw.verdict !== 'kurang' && /dari 4% janjang ditimbang/.test(sNw.evidence.find(e => e.indikator === 'BJR').arti) && sBjr.verdict === 'kurang' && /^BJR 55%/.test(sBjr.reason),
@@ -415,8 +415,8 @@ ctx2.r09 = reco('R09'); ctx2.r04 = reco('R04'); ctx2.r17 = reco('R17');
 ok(run2(`r09.when({ flow: null }, { detected: [{ text: 'PERLU DICEK: janjang dimuat melebihi dipanen 5.021 jjg; cek pencatatan panen dan restan awal periode.' }] })`) === null &&
    run2(`!!r09.when({ flow: null }, { detected: [{ text: 'PERLU DICEK: restan menumpuk 3 bulan' }] })`),
   'R09 (kapasitas muat) tidak terpicu oleh temuan "dimuat melebihi dipanen"');
-ok(run2(`r04.when({ yield: [], upkeep: null, marihat: { reliable: false, achTon: 0.28, realTonHa: 5.4, pot: { ton: 19.6 }, cls: 'S3' } })`) === null &&
-   run2(`r04.when({ yield: [], upkeep: null, marihat: { reliable: true, achTon: 0.28, realTonHa: 5.4, pot: { ton: 19.6 }, cls: 'S3' } }).priority`) === 'tinggi',
+ok(run2(`r04.when({ yield: [], upkeep: null, marihat: { reliable: false, achTon: 0.28, realTonHa: 0.45, month: { y: 2026, m: 9 }, pot: { ton: 19.6 }, potMon: { ton: 19.6 / 12 }, cls: 'S3' } })`) === null &&
+   run2(`r04.when({ yield: [], upkeep: null, marihat: { reliable: true, achTon: 0.28, realTonHa: 0.45, month: { y: 2026, m: 9 }, pot: { ton: 19.6 }, potMon: { ton: 19.6 / 12 }, cls: 'S3' } }).priority`) === 'tinggi',
   'R04 tidak terpicu dari produktivitas yang disetahunkan dari data pendek');
 ctx2.yUp = [5, 6, 7, 8, 9, 10].map((v, i) => ({ p: { y: 2026, m: i }, label: 'x', value: v }));
 ok(run2(`r17.when({ yield: yUp, marihat: { achTon: 0.29 } })`) === null && !!run2(`r17.when({ yield: yUp, marihat: { achTon: 0.95 } })`),
@@ -700,5 +700,11 @@ const bjrM = run2(`(function(){ const P = m => ({ y: 2026, m });
   const d2 = { produksi: d.produksi.slice(0, 2), totalJjg: [] };
   return { a: ms.map(x => x.label).join(), b: bjrBaseMonths(d2, sold).length }; })()`);
 ok(bjrM.a === 'Okt' && bjrM.b === 0, `BJR untuk pencapaian Marihat hanya dari bulan yang janjang berberatnya cukup (${bjrM.a}); bulan dengan BJR tidak wajar dibuang`);
+
+// Marihat PER BULAN LAPORAN: produksi bulan itu per ha vs potensi tahunan ÷ 12; paket tidak menyajikan angka per tahun
+const MM = run2(`(function(){ const M = D2.marihat; if (!M) return null; return { same: !D2.reportP || M.stale || mkey(M.month) === mkey(D2.reportP),
+  unit: Math.abs(M.potMon.ton - M.pot.ton / 12) < 1e-9 && Math.abs(M.achTon - M.realTonHa / M.potMon.ton) < 1e-9, txt: describeMarihat(D2) }; })()`);
+ok(MM && MM.same && MM.unit && /ton TBS\/ha\/bulan/.test(MM.txt) && !/ton TBS\/ha\/tahun|ton\/ha\/tahun/.test(MM.txt),
+  'pencapaian Marihat dihitung untuk bulan laporan saja, satuan per bulan (potensi tahunan ÷ 12)');
 
 console.log(process.exitCode ? '\nADA YANG GAGAL' : '\nSEMUA UJI LOLOS');

@@ -1283,7 +1283,7 @@ const KPI_LIBRARY = {
   },
   pencapaian_marihat: d => d.marihat && {
     name: 'Vs standar Marihat', value: fmtPct(d.marihat.achTon * 100, 0), unit: `kelas ${d.marihat.cls}`,
-    note: `${fmt(d.marihat.realTonHa, 1)} vs ${fmt(d.marihat.pot.ton, 1)} ton/ha/tahun` },
+    note: `${monthShort(d.marihat.month)}: ${fmt(d.marihat.realTonHa, 2)} vs ${fmt(d.marihat.potMon.ton, 2)} ton/ha/bulan` },
   kebocoran_janjang: d => {
     const F = d.flow;
     if (!F) return null;

@@ -58,7 +58,7 @@ const RECO_CATALOG = [
       if (UF && UF.of >= 6 && (UF.months === 0 || UF.monthsSince >= 6)) return { evidence: UF.months === 0
         ? `tidak ada biaya pemupukan dalam ${UF.of} bulan catatan upkeep` : `pemupukan terakhir ${monthLong(UF.last)}, ${UF.monthsSince} bulan sebelum bulan laporan (acuan 2–3 kali/tahun)`,
         priority: M && M.reliable && M.achTon < 0.7 ? 'tinggi' : 'sedang' };
-      if (M && M.reliable && M.achTon < 0.7) return { evidence: `produktivitas ${fmt(M.realTonHa, 1)} t/ha/th, baru ${fmtPct(M.achTon * 100, 0)} dari standar Marihat ${M.cls} (${fmt(M.pot.ton, 1)})${fert ? `; biaya pupuk ${fmtPct(fert.pct, 0)} upkeep` : ''}`, priority: M.achTon < 0.5 ? 'tinggi' : 'sedang' };
+      if (M && M.reliable && M.achTon < 0.7) return { evidence: `produktivitas ${monthLong(M.month)} ${fmt(M.realTonHa, 2)} t/ha, baru ${fmtPct(M.achTon * 100, 0)} dari standar Marihat ${M.cls} per bulan (${fmt(M.potMon.ton, 2)})${fert ? `; biaya pupuk ${fmtPct(fert.pct, 0)} upkeep` : ''}`, priority: M.achTon < 0.5 ? 'tinggi' : 'sedang' };
       return ['turun', 'fluktuatif'].indexOf(y.trend) >= 0
         ? { evidence: `yield ${y.trend}${fert ? `; biaya pupuk ${fmtRp(fert.value)} (${fmtPct(fert.pct, 0)} upkeep)` : ''}`, priority: 'sedang' } : null; } },
 
