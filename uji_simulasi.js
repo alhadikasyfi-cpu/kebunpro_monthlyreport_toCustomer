@@ -199,7 +199,7 @@ ok(prods.length === 2 && overlapFree && bottom <= run('DECK_CONFIG.LAYOUT.BOTTOM
 const kreq = run(`(function(){ const b = new SlideBatch('pg','kpi'); drawKpiCards(b, computeOwnerKpis(kd), 160); return JSON.stringify(b.req); })()`);
 ok(/vs rata-rata 2 bulan/.test(kreq), 'kartu KPI menampilkan pembanding');
 const agf = run('fallbackAgenda(plan)');
-ok(agf.items.map(i => i.title).join('|') === 'Kinerja Bulan Ini|Uang dan Hasil Kebun|Blok, Perawatan, dan Pupuk|Pencatatan dan Produktivitas Tim|Temuan dan Actionable Item|Lampiran' &&
+ok(agf.items.map(i => i.title).join('|') === 'Kinerja Bulan Ini|Uang dan Hasil Kebun|Blok, Perawatan, dan Pupuk|Alur Janjang dan Produktivitas Tim|Temuan dan Actionable Item|Lampiran' &&
    agf.items[0].pages[0] === 3 && agf.items[1].pages[0] === 4 && agf.items[5].pages[0] === plan.dividerPage && agf.items.length <= 6 && agf.outcomes.length === 3, `agenda tetap: ${agf.items.map(i => `${i.title} (hlm ${i.pages[0]})`).join(', ')}`);
 run('RUN_WARNINGS = []');
 
@@ -710,5 +710,19 @@ ok(MM && MM.same && MM.unit && /ton TBS\/ha\/bulan/.test(MM.txt) && !/ton TBS\/h
 // Pembanding Marihat = yield di sheet bulan itu (sama dengan yang dilihat owner), bukan estimasi dari janjang dipanen
 const MY = run2(`(function(){ const M = D2.marihat; return { y: valAt(D2.yield, M.month), r: M.realTonHa, b: M.basis }; })()`);
 ok(MY.b === 'yield' && MY.y !== null && Math.abs(MY.y - MY.r) < 1e-9, `pembanding Marihat memakai yield sheet bulan itu (${MY.r})`);
+
+// Template alur baru: "Month | Janjang Panen | Janjang Muat | Janjang Terjual" terbaca sebagai alur panen -> muat -> terjual
+const nf = run2(`(function(){ const v = [['Month', 'Janjang Panen', 'Janjang Muat', 'Janjang Terjual'], [new Date(2026, 9, 1), 19644, 20567, 16283]];
+  return [readMonthly(v, DECK_CONFIG.HEADERS.FLOW_PANEN), readMonthly(v, DECK_CONFIG.HEADERS.FLOW_MUAT), readMonthly(v, DECK_CONFIG.HEADERS.FLOW_SOLD)].map(x => x.length ? x[0].value : null); })()`);
+ok(nf.join() === '19644,20567,16283', `template alur baru (Janjang Panen/Muat/Terjual) terbaca: ${nf.join(' → ')}`);
+// Slide 8: alur janjang + kartu tim; angka judul = saldo belum tercatat terjual yang tertulis di slide; semua teks di dalam area isi
+const s8 = run2(`(function(){ RUN_WARNINGS = []; const rt = buildRecordTeam(D2), b = new SlideBatch('pg','s8'); drawRecordTeam(b, rt);
+  return { rt, h: dataHeadline('m_catat', D2), req: JSON.stringify(b.req), texts: b.texts }; })()`);
+const fl8 = s8.rt.flow;
+ok(fl8 && fl8.balance === fl8.carryIn + fl8.panen - fl8.sold || (fl8 && fl8.aged > 0) || (fl8 && fl8.overSold), 'slide 8: saldo belum tercatat terjual = sisa sebelumnya + panen − terjual');
+ok(/Alur janjang/.test(s8.req) && /Produktivitas tim/.test(s8.req) && s8.rt.tiles.some(t => t.key === 'panen') &&
+   s8.texts.every(t => t.y + t.h <= CSA.top + CSA.height + 1 && t.x + t.w <= CSA.left + CSA.width + 1) &&
+   (!fl8 || fl8.overSold || fl8.balancePct < run2('DECK_CONFIG.THRESHOLDS.FLOW_LOSS_PCT') || fl8.balancePct > 100 || s8.h.indexOf(run2('fmt(' + fl8.balancePct + ', 0)') + '%') === 0),
+  `slide 8 tergambar (alur + kartu tim di dalam area isi); judul "${s8.h}" memakai angka yang sama dengan isi slide`);
 
 console.log(process.exitCode ? '\nADA YANG GAGAL' : '\nSEMUA UJI LOLOS');

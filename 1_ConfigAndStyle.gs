@@ -287,8 +287,8 @@ const DECK_CONFIG = {
     BLOCKS: ['block_sale', 'block sale', 'block (name, hectarage, planted year)', 'block', 'blok'],
     BLOCKS_UNSALE: ['block_unsale', 'block unsale'],        // blok tanpa penjualan bulan itu
     BJR: ['avg_bjr_kg'],
-    FLOW_PANEN: ['jjg dipanen', 'janjang dipanen'],
-    FLOW_MUAT: ['jjg dimuat', 'janjang dimuat'],
+    FLOW_PANEN: ['jjg dipanen', 'janjang dipanen', 'janjang panen', 'jjg panen'],   // template baru: Janjang Panen, Janjang Muat, Janjang Terjual
+    FLOW_MUAT: ['jjg dimuat', 'janjang dimuat', 'janjang muat', 'jjg muat'],
     FLOW_TRIP: ['jjg masuk trip', 'janjang masuk trip', 'jjg delivery'],
     FLOW_SOLD: ['jjg terjual', 'janjang terjual'],                       // terjual DENGAN berat (= total_sale_jjg)
     FLOW_SOLD_NOWEIGHT: ['jjg terjual tanpa berat', 'janjang terjual tanpa berat'],   // = data penjualan (berat) belum diinput

@@ -761,54 +761,100 @@ function drawBlockPriority(b, P) {
 }
 
 /* ------------------------------------------------------------------------- */
-/* Slide utama: Pencatatan dan Produktivitas Tim                              */
+/* Slide utama: Alur Janjang dan Produktivitas Tim                            */
 /* ------------------------------------------------------------------------- */
 
 /**
- * Kiri: kelengkapan input bulan laporan (batang 0–100%, angka bulan lalu di bawahnya).
- * Kanan: produktivitas mandor panen (jjg/hari; maks. 5 mandor) dan rata-rata mandor muat.
+ * Atas : alur janjang bulan laporan (kotak per tahap, panah dengan % terhadap tahap sebelumnya, angka bulan lalu abu-abu)
+ *        + satu kalimat saldo "belum tercatat terjual s.d. akhir bulan" (= angka judul slide) dan penjelasan singkat.
+ * Bawah: kartu produktivitas tim Panen / Muat / Rawat: rata-rata bulan laporan vs bulan lalu + rincian per mandor.
  */
 function drawRecordTeam(b, rt) {
-  const C = DECK_CONFIG.COLOR, A = DECK_CONFIG.LAYOUT.CONTENT, T = DECK_CONFIG.TYPE, W = DECK_CONFIG.WEIGHT;
-  const both = rt.inputs.length && (rt.panen.length || rt.muat.length);
-  const colW = both ? (A.width - 16) / 2 : A.width, xR = A.left + colW + 16;
-  const head = (txt, x, w) => b.text(txt, x, A.top, w, 14, { size: T.BODY, weight: W.HEAVY, color: C.INK, align: 'START', valign: 'TOP', noGroup: true, nowrap: true });
-  if (rt.inputs.length) {
-    head(`Kelengkapan input ${monthShort(rt.p)}`, A.left, colW);
-    const rowH = Math.min(58, (A.height - 24) / rt.inputs.length);
-    rt.inputs.forEach((r, i) => {
-      const y = A.top + 24 + i * rowH, barW = colW - 40;
-      b.text(r.label, A.left, y, colW, 13, { size: T.CAPTION + 0.5, weight: W.STRONG, color: C.INK, align: 'START', valign: 'TOP', noGroup: true, nowrap: true });
-      b.rect(A.left, y + 16, barW, 12, C.TINT);
-      const good = r.cur >= 95, color = good ? C.GREEN : r.cur >= 80 ? C.WARNING : C.DANGER;
-      b.rect(A.left, y + 16, Math.max(2, barW * r.cur / 100), 12, color);
-      b.text(`${fmt(r.cur, 0)}%`, A.left + barW + 3, y + 14, 37, 16, { size: T.BODY, weight: W.HEAVY, color, align: 'START', valign: 'MIDDLE', noGroup: true, nowrap: true });
-      if (r.ref !== null && r.ref !== undefined) b.text(`${monthShort(rt.q)}: ${fmt(r.ref, 0)}%`, A.left, y + 30, colW, 12, { size: T.CAPTION, color: C.MUTED, align: 'START', valign: 'TOP', noGroup: true, nowrap: true });
+  const C = DECK_CONFIG.COLOR, A = DECK_CONFIG.LAYOUT.CONTENT, L = DECK_CONFIG.LAYOUT, T = DECK_CONFIG.TYPE, W = DECK_CONFIG.WEIGHT;
+  const txt = (s, x, y, w, h, o) => b.text(s, x, y, w, h, Object.assign({ align: 'START', valign: 'TOP', noGroup: true, nowrap: true }, o));
+  const head = (s, y, right) => {
+    txt(s, A.left, y, A.width, 14, { size: T.BODY, weight: W.HEAVY, color: C.INK });
+    if (right) txt(right, A.left, y + 1, A.width, 12, { size: T.CAPTION - 0.5, color: C.MUTED, align: 'END' });
+  };
+  const pctColor = v => (v >= 95 ? C.GREEN : v >= 80 ? C.WARNING : C.DANGER);
+  const fit = (s, size, w, heavy) => { let t = String(s); while (t.length > 3 && estWidth(t, size, heavy) > w) t = t.slice(0, -2) + '…'; return t; };
+  let y = A.top;
+  const F = rt.flow;
+  if (F) {
+    head(`Alur janjang ${monthLong(F.p)}`, y, F.prevP ? `angka abu-abu = ${monthShort(F.prevP)}` : '');
+    y += 22;
+    const n = F.stages.length, arrowW = n > 3 ? 40 : 52, boxW = (A.width - arrowW * (n - 1)) / n, boxH = 58;
+    F.stages.forEach((st, i) => {
+      const x = A.left + i * (boxW + arrowW);
+      b.card(x, y, boxW, boxH);
+      txt(st.name.toUpperCase(), x + 8, y + 7, boxW - 16, 11, { size: T.KPI_LABEL, weight: W.HEAVY, color: C.MUTED });
+      txt(fmt(st.cur, 0), x + 8, y + 20, boxW - 16, 20, { size: n > 3 ? T.METRIC : T.METRIC + 2, weight: W.HEAVY, color: C.INK });
+      const pl = st.prev !== null && st.prev !== undefined ? `${monthShort(F.prevP)}: ${fmt(st.prev, 0)}` : 'janjang';
+      txt(estWidth(pl, T.CAPTION - 0.5, false) <= boxW - 16 ? pl : `${BULAN_PENDEK[F.prevP.m]} ${fmt(st.prev, 0)}`, x + 8, y + 42, boxW - 16, 11,
+        { size: T.CAPTION - 0.5, color: C.MUTED });
+      if (i) {
+        const ax = x - arrowW + 6, aw = arrowW - 12, color = pctColor(Math.min(st.pct, 100));
+        txt(st.pct !== null ? `${fmt(st.pct, 0)}%` : '-', ax - 4, y + 12, aw + 8, 13, { size: T.BODY, weight: W.HEAVY, color, align: 'CENTER' });
+        b.rect(ax, y + 29, aw, 10, C.NEUTRAL, 'RIGHT_ARROW', true);
+      }
     });
+    y += boxH + 8;
+    // Saldo belum tercatat terjual (sama dengan judul) + penjelasan
+    const mon = monthShort(F.p), bad = F.balancePct !== null && F.balancePct >= DECK_CONFIG.THRESHOLDS.FLOW_LOSS_PCT;
+    const l1 = F.overSold ? `Terjual melebihi panen ${mon} + sisa sebelumnya: sebagian panen belum diinput.`
+      : `Belum tercatat terjual s.d. akhir ${mon}: ${fmt(F.balance, 0)} jjg${F.balanceRp ? ` ≈ ${fmtRpShort(F.balanceRp)}` : ''}` +
+        ` (${F.carryIn ? `sisa sebelumnya ${fmt(F.carryIn, 0)} + ` : ''}panen ${fmt(F.panen, 0)} − terjual ${fmt(F.sold, 0)})`;
+    const l2 = [F.muatOver && !F.overSold ? 'Dimuat > dipanen: restan bulan lalu ikut dimuat, atau sebagian panen belum diinput.' : '',
+      F.noWeight ? `${fmt(F.noWeight, 0)} janjang terjual belum diinput data penjualannya (berat).` : '',
+      !F.muatOver && !F.noWeight && bad ? 'Pastikan muat dan penjualan diinput setiap hari agar alur tercatat lengkap.' : ''].filter(Boolean).join(' ');
+    const h1 = estLines(l1, T.CAPTION + 0.5, A.width) * (T.CAPTION + 0.5) * 1.3;
+    b.text(l1, A.left, y, A.width, h1, { size: T.CAPTION + 0.5, weight: W.HEAVY, color: F.overSold || bad ? C.DANGER : C.GREEN, align: 'START', valign: 'TOP', noGroup: true, lineSpacing: 115 });
+    y += h1 + 2;
+    if (l2) { const h2 = estLines(l2, T.CAPTION, A.width) * T.CAPTION * 1.3;
+      b.text(l2, A.left, y, A.width, h2, { size: T.CAPTION, color: C.MUTED, align: 'START', valign: 'TOP', noGroup: true, lineSpacing: 115 }); y += h2; }
+    y += L.SECTION_GAP;
   }
-  if (rt.panen.length || rt.muat.length) {
-    const x = both ? xR : A.left, list = (rt.panen.length ? rt.panen : rt.muat).slice(0, 5), role = rt.panen.length ? 'panen' : 'muat';
-    head(`Mandor ${role} (jjg/hari, ${list[0].period})`, x, colW);
-    const max = Math.max.apply(null, list.map(t => Math.max(t.cur, t.ref || 0))) || 1;
-    const rowH = Math.min(46, (A.height - 24 - (rt.muat.length && role === 'panen' ? 30 : 0)) / list.length), labW = Math.min(90, colW * 0.42), barW = colW - labW - 36;
-    list.forEach((t, i) => {
-      const y = A.top + 24 + i * rowH;
-      b.text(t.name.length > 16 ? t.name.slice(0, 15) + '…' : t.name, x, y, labW - 4, 14, { size: T.CAPTION + 0.5, weight: W.STRONG, color: C.INK, align: 'START', valign: 'TOP', noGroup: true, nowrap: true });
-      b.text(`${fmt(t.days, 0)} hari`, x, y + 13, labW - 4, 12, { size: T.CAPTION - 0.5, color: C.MUTED, align: 'START', valign: 'TOP', noGroup: true, nowrap: true });
-      const up = t.ref ? t.cur >= t.ref : true;
-      b.rect(x + labW, y + 2, Math.max(2, barW * t.cur / max), 11, C.GREEN);
-      if (t.ref) b.rect(x + labW, y + 15, Math.max(2, barW * t.ref / max), 6, C.NEUTRAL);
-      b.text(fmt(t.cur, 0), x + labW + barW + 3, y, 34, 14, { size: T.CAPTION + 0.5, weight: W.HEAVY, color: up ? C.INK : C.DANGER, align: 'START', valign: 'MIDDLE', noGroup: true, nowrap: true });
+  if (rt.tiles.length) {
+    const t0 = rt.tiles[0];
+    head(`Produktivitas tim ${t0.period.label}`, y, t0.prevPeriod ? `pembanding = ${t0.prevPeriod.label}` : '');
+    y += 20;
+    const n = rt.tiles.length, gap = L.CARD_GAP, w = (A.width - gap * (n - 1)) / n, h = A.top + A.height - y, P = 9, inner = w - 2 * P;
+    const rowH = 23, maxRows = Math.max(1, Math.floor((h - 70) / rowH));
+    rt.tiles.forEach((t, i) => {
+      const x = A.left + i * (w + gap);
+      b.card(x, y, w, h);
+      let yy = y + P;
+      txt(t.title.toUpperCase(), x + P, yy, inner, 11, { size: T.KPI_LABEL, weight: W.HEAVY, color: C.GREEN });
+      txt(`${t.n} mandor`, x + P, yy, inner, 11, { size: T.CAPTION - 0.5, color: C.MUTED, align: 'END' });
+      yy += 14;
+      const val = fmt(t.cur, 0), unit = ' ' + t.unit;
+      const vs = estWidth(val, T.METRIC + 4, true) + estWidth(unit, T.CAPTION, true) <= inner ? T.METRIC + 4 : T.METRIC;
+      b.richText([{ text: val, size: vs, weight: W.HEAVY, color: C.INK }, { text: unit, size: T.CAPTION, weight: W.STRONG, color: C.MUTED }],
+        x + P, yy, inner, vs * 1.15, { align: 'START', valign: 'BOTTOM', noGroup: true, nowrap: true });
+      yy += vs * 1.15 + 2;
+      let note = 'belum ada pembanding', nc = C.MUTED;
+      if (t.ref && t.key === 'rawat') { note = `${t.prevPeriod.label}: ${fmt(t.ref, 0)} hari kerja`; nc = C.MUTED; }
+      else if (t.ref) { const ch = (t.cur / t.ref - 1) * 100;
+        note = `${ch >= 0 ? '▲' : '▼'} ${fmt(Math.abs(ch), 0)}% vs ${t.prevPeriod.label} (${fmt(t.ref, 0)})`; nc = ch >= 0 ? C.GREEN : C.WARNING; }
+      txt(note, x + P, yy, inner, 11, { size: T.CAPTION - 0.3, weight: W.STRONG, color: nc });
+      yy += 15;
+      b.line(x + P, yy, x + w - P, yy, C.BORDER, 0.75);
+      yy += 5;
+      const shown = t.list.slice(0, maxRows);
+      shown.forEach(r => {
+        const vw = estWidth(r.value, T.CAPTION, true) + 2;
+        txt(fit(r.name, T.CAPTION, inner - vw - 4, true), x + P, yy, inner - vw - 4, 11, { size: T.CAPTION, weight: W.STRONG, color: C.INK });
+        txt(r.value, x + P, yy, inner, 11, { size: T.CAPTION, weight: W.HEAVY, color: C.INK, align: 'END' });
+        txt(fit(r.sub, T.CAPTION - 1, inner, false), x + P, yy + 11, inner, 10, { size: T.CAPTION - 1, color: C.MUTED });
+        yy += rowH;
+      });
+      if (t.list.length > shown.length) txt(`+${t.list.length - shown.length} mandor lain di lampiran`, x + P, yy, inner, 10, { size: T.CAPTION - 1, color: C.MUTED });
     });
-    const yl = A.top + 24 + list.length * rowH + 4;
-    b.rect(x, yl + 3, 9, 6, C.NEUTRAL);
-    b.label(list[0].prevPeriod ? `${list[0].prevPeriod} (bulan lalu)` : 'bulan lalu', x + 12, yl, colW - 12, { align: 'START', size: T.CAPTION - 0.5, color: C.MUTED });
-    if (role === 'panen' && rt.muat.length) {
-      const avg = rt.muat.reduce((a, t) => a + t.cur, 0) / rt.muat.length, ref = rt.muat.filter(t => t.ref);
-      const avgRef = ref.length ? ref.reduce((a, t) => a + t.ref, 0) / ref.length : null;
-      b.text(`Mandor muat: rata-rata ${fmt(avg, 0)} jjg/hari${avgRef ? ` (bulan lalu ${fmt(avgRef, 0)})` : ''}, ${rt.muat.length} mandor`, x, yl + 16, colW, 13,
-        { size: T.CAPTION, weight: W.STRONG, color: C.INK, align: 'START', valign: 'TOP', noGroup: true });
-    }
+  } else if (rt.inputs.length) {
+    head('Kelengkapan input', y);
+    y += 20;
+    rt.inputs.forEach(r => { txt(`${r.label}: ${fmt(r.cur, 0)}%${r.ref !== null && r.ref !== undefined ? ` (${monthShort(rt.q)} ${fmt(r.ref, 0)}%)` : ''}`, A.left, y, A.width, 13,
+      { size: T.BODY, weight: W.STRONG, color: pctColor(r.cur) }); y += 18; });
   }
 }
 

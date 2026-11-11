@@ -590,7 +590,7 @@ function fallbackAgenda(plan) {
     { title: 'Kinerja Bulan Ini', desc: 'Panen, penjualan & pendapatan, perawatan, produktivitas · slide 3', minutes: 10, pages: [plan.introPage] },
     sess('Uang dan Hasil Kebun', ['m_uang', 'm_hasil'], 'Laba kotor, struktur biaya, hasil vs potensi umur', 15),
     sess('Blok, Perawatan, dan Pupuk', ['m_blok', 'm_rawat'], 'Blok prioritas, biaya perawatan, status pupuk', 15),
-    sess('Pencatatan dan Tim', ['m_catat'], 'Kelengkapan input dan produktivitas mandor', 10),
+    sess('Alur Janjang dan Tim', ['m_catat'], 'Panen, muat, terjual; produktivitas tim', 10),
     plan.anomTopic || plan.conclTopic ? { title: 'Temuan dan Actionable Item', desc: `Hal yang perlu dicek dan tindakan berikutnya · slide ${[plan.anomTopic, plan.conclTopic].filter(Boolean).map(t => t.page).join('–')}`,
       minutes: 20, pages: [(plan.anomTopic || plan.conclTopic).page] } : null,
     { title: 'Lampiran', desc: n ? `A1–A${n}: rincian di balik setiap angka, dapat diklik` : 'Rincian di balik setiap angka', minutes: 0, pages: [plan.dividerPage] }
@@ -1255,8 +1255,8 @@ const MAIN_GROUPS = [
     question: 'Blok mana yang paling menahan hasil kebun, seberapa jauh dari standar, dan apa tindak lanjutnya?' },
   { id: 'm_rawat', title: 'Perawatan dan Pemupukan', members: ['upkeep', 'upkeepakt', 'blokbiaya', 'pupuk', 'tanah'],
     question: 'Untuk pekerjaan apa biaya perawatan bulan ini, apakah wajar dibanding biasanya, dan apakah pemupukan sudah cukup?' },
-  { id: 'm_catat', title: 'Pencatatan dan Produktivitas Tim', members: ['alurjjg', 'tanpaberat', 'restan', 'blokunsale', 'rkh', 'mandorpanen', 'mandormuat', 'rawat'],
-    question: 'Seberapa lengkap data panen, muat, dan penjualan diinput ke aplikasi bulan ini, dan seberapa produktif mandor panen dan muat?' }
+  { id: 'm_catat', title: 'Alur Janjang dan Produktivitas Tim', members: ['alurjjg', 'tanpaberat', 'restan', 'blokunsale', 'rkh', 'mandorpanen', 'mandormuat', 'rawat'],
+    question: 'Dari janjang yang dipanen bulan ini, berapa yang sudah dimuat dan tercatat terjual, berapa yang belum, dan seberapa produktif tim panen, muat, dan rawat dibanding bulan lalu?' }
 ];
 
 /** Bulan kalender sebelum p. */
@@ -1304,7 +1304,7 @@ const MAIN_VISUAL = {
   m_catat: d => {
     const rt = buildRecordTeam(d);
     if (!rt) return null;
-    return { draw: b => drawRecordTeam(b, rt), desc: 'kiri: kelengkapan input bulan laporan vs bulan lalu (panen tercatat dimuat, penjualan diinput, blok penjualannya tercatat, RKH selesai bila dipakai); kanan: produktivitas mandor panen (jjg/hari) bulan laporan vs bulan lalu',
+    return { draw: b => drawRecordTeam(b, rt), desc: 'atas: alur janjang bulan laporan Dipanen → Dimuat → Terjual (% tiap tahap terhadap tahap sebelumnya, angka bulan lalu di bawahnya) dan saldo yang belum tercatat terjual s.d. akhir bulan; bawah: tiga kartu produktivitas tim (mandor panen dan muat jjg/hari rata-rata, rawat hari kerja) bulan laporan vs bulan lalu dengan rincian per mandor',
       line: rt.facts };
   }
 };
@@ -1334,8 +1334,12 @@ function rawatSummary(d) {
 }
 
 /**
- * Pencatatan & tim bulan laporan vs bulan lalu: porsi input yang lengkap (%) dan produktivitas mandor panen/muat.
- * Indikator yang datanya tidak ada (mis. RKH tidak dipakai di aplikasi) tidak ditampilkan.
+ * Slide 8 "Alur Janjang dan Produktivitas Tim" (bulan laporan vs bulan lalu):
+ *  - flow : alur janjang Dipanen -> Dimuat -> (Masuk trip) -> Terjual bulan laporan, % tiap tahap terhadap tahap sebelumnya,
+ *           dan saldo yang belum tercatat terjual s.d. akhir bulan (sisa bulan lalu + panen - terjual) = angka judul.
+ *  - tiles: produktivitas mandor panen & muat (jjg/hari, rata-rata tertimbang hari kerja) dan rawat (hari kerja + aktivitas utama).
+ *  - inputs: kelengkapan input (dipakai di paket Claude, tidak digambar).
+ * Bagian yang datanya tidak ada (mis. RKH tidak dipakai di aplikasi, tabel mandor rawat kosong) tidak ditampilkan.
  */
 function buildRecordTeam(d) {
   const p = d.reportP;
@@ -1351,22 +1355,66 @@ function buildRecordTeam(d) {
     { label: 'Blok penjualannya tercatat', cur: d.unsale ? unAt(p) : null, ref: d.unsale ? unAt(q) : null },
     { label: 'RKH selesai', cur: d.rkh ? rkhAt(p) : null, ref: d.rkh ? rkhAt(q) : null }
   ].filter(r => r.cur !== null);
-  const team = [];
-  [['panen', d.mandorPanen], ['muat', d.mandorMuat]].forEach(([role, m]) => {
+
+  // Alur janjang bulan laporan (bulan terakhir yang penjualannya sudah diinput)
+  const F = d.flow, c = F && F.cur;
+  let flow = null;
+  if (c && c.stages && c.stages.length >= 2) {
+    const pv = F.prev && mkey(prevMonthOf(c.p)) === mkey(F.prev.p) ? F.prev : null;
+    const stages = c.stages.map((st, i) => ({ name: st.name, cur: st.total, prev: pv ? pv.stages[i] && pv.stages[i].total : null,
+      pct: i && c.stages[i - 1].total ? (st.total / c.stages[i - 1].total) * 100 : null }));
+    const panen = stages[0].cur, muat = stages[1].cur, sold = stages[stages.length - 1].cur;
+    flow = { p: c.p, prevP: pv ? pv.p : null, stages, panen, sold, carryIn: c.carryKnown ? c.carryIn : 0, balance: c.balance,
+      balancePct: panen ? (c.balance / panen) * 100 : null, balanceRp: c.balance && c.bjrUsed && c.price ? c.balance * c.bjrUsed * c.price : null,
+      aged: c.agedStock, noWeight: c.soldNoWeight || 0, muatOver: muat > panen * (1 + DECK_CONFIG.THRESHOLDS.FLOW_EXCESS_PCT / 100),
+      overSold: c.overSold, salesMissing: c.salesMissing };
+  }
+
+  // Produktivitas tim: bulan penuh terakhir (acuan) vs sebelumnya, rata-rata tertimbang hari kerja
+  const lastFull = m => { const full = m.periods.map((x, i) => ({ x, i })).filter(z => !z.x.partial); return [full[full.length - 1], full[full.length - 2]]; };
+  const tiles = [];
+  [['panen', 'Panen', d.mandorPanen], ['muat', 'Muat', d.mandorMuat]].forEach(([key, title, m]) => {
     if (!m) return;
-    const full = m.periods.map((x, i) => ({ x, i })).filter(z => !z.x.partial);
-    const last = full[full.length - 1], prev = full[full.length - 2];
+    const [last, prev] = lastFull(m);
     if (!last) return;
-    m.rows.filter(r => r.vals[last.i] && r.vals[last.i].rate).forEach(r => team.push({ role, name: String(r.name || 'Tanpa nama'),
-      cur: r.vals[last.i].rate, days: r.vals[last.i].days, ref: prev && r.vals[prev.i] ? r.vals[prev.i].rate : null, period: last.x.label, prevPeriod: prev ? prev.x.label : null }));
+    const avg = i => { const v = m.rows.map(r => r.vals[i]).filter(x => x && x.rate && x.days);
+      const dd = v.reduce((a, x) => a + x.days, 0); return dd ? v.reduce((a, x) => a + x.rate * x.days, 0) / dd : null; };
+    const cur = avg(last.i);
+    if (!cur) return;
+    const list = m.rows.filter(r => r.vals[last.i] && r.vals[last.i].rate).map(r => ({ name: String(r.name || 'Tanpa nama'), v: r.vals[last.i].rate,
+      days: r.vals[last.i].days, ref: prev && r.vals[prev.i] ? r.vals[prev.i].rate : null })).sort((a, b) => b.v - a.v);
+    tiles.push({ key, title, unit: 'jjg/hari', cur, ref: prev ? avg(prev.i) : null, period: last.x, prevPeriod: prev ? prev.x : null,
+      n: list.length, days: list.reduce((a, x) => a + (x.days || 0), 0),
+      list: list.map(x => ({ name: x.name, value: fmt(x.v, 0), sub: `${fmt(x.days, 0)} hari${x.ref ? ` · ${prev.x.label} ${fmt(x.ref, 0)}` : ''}` })) });
   });
-  if (!inputs.length && !team.length) return null;
-  const panen = team.filter(t => t.role === 'panen').sort((a, b) => b.cur - a.cur), muat = team.filter(t => t.role === 'muat').sort((a, b) => b.cur - a.cur);
+  const R = d.rawatActivities;
+  if (R) {
+    const [last, prev] = lastFull(R);
+    const days = i => R.rows.reduce((a, r) => a + ((r.vals[i] && r.vals[i].days) || 0), 0);
+    if (last && days(last.i)) {
+      const list = R.rows.filter(r => r.vals[last.i] && r.vals[last.i].days).map(r => {
+        const v = r.vals[last.i], top = v.acts.slice().sort((a, b) => b.rate - a.rate)[0];
+        return { name: r.name, d: v.days, value: `${fmt(v.days, 0)} hari`, sub: top ? `${top.name} ${fmt(top.rate, top.rate < 10 ? 1 : 0)} ${top.unit}/hr` : 'aktivitas belum dirinci' };
+      }).sort((a, b) => b.d - a.d);
+      tiles.push({ key: 'rawat', title: 'Rawat', unit: 'hari kerja', cur: days(last.i), ref: prev ? days(prev.i) || null : null, period: last.x, prevPeriod: prev ? prev.x : null,
+        n: list.length, list });
+    }
+  }
+  if (!flow && !tiles.length && !inputs.length) return null;
+
   const f0 = v => (v === null || v === undefined ? '-' : `${fmt(v, 0)}%`);
-  const facts = `PENCATATAN & TIM ${monthLong(p)} (vs ${monthLong(q)}): ` + inputs.map(r => `${r.label} ${f0(r.cur)} (${f0(r.ref)})`).join('; ') +
-    (panen.length ? `. Mandor panen (jjg/hari, ${panen[0].period}): ${panen.map(t => `${t.name} ${fmt(t.cur, 0)}${t.ref ? ` (${fmt(t.ref, 0)})` : ''}`).join(', ')}` : '') +
-    (muat.length ? `. Mandor muat (jjg/hari): ${muat.map(t => `${t.name} ${fmt(t.cur, 0)}${t.ref ? ` (${fmt(t.ref, 0)})` : ''}`).join(', ')}` : '') + '.';
-  return { p, q, inputs, panen, muat, facts };
+  const facts = [
+    flow ? `ALUR JANJANG ${monthLong(flow.p)}${flow.prevP ? ` (angka dalam kurung = ${monthLong(flow.prevP)})` : ''}: ` +
+      flow.stages.map(st => `${st.name} ${fmt(st.cur, 0)}${st.prev !== null && st.prev !== undefined ? ` (${fmt(st.prev, 0)})` : ''}${st.pct !== null ? ` = ${fmt(st.pct, 0)}% dari tahap sebelumnya` : ''}`).join(' → ') +
+      `. Belum tercatat terjual s.d. akhir bulan: ${fmt(flow.balance, 0)} jjg = ${flow.carryIn ? `sisa sebelumnya ${fmt(flow.carryIn, 0)} + ` : ''}panen ${fmt(flow.panen, 0)} − terjual ${fmt(flow.sold, 0)}` +
+      `${flow.balanceRp ? ` ≈ ${fmtRp(flow.balanceRp)}` : ''}${flow.balancePct !== null ? ` (${fmt(flow.balancePct, 0)}% dari panen bulan ini)` : ''}.` +
+      (flow.muatOver ? ' Dimuat lebih banyak dari dipanen: restan bulan lalu ikut dimuat, atau sebagian panen belum diinput.' : '') +
+      (flow.noWeight ? ` ${fmt(flow.noWeight, 0)} janjang terjual belum diinput data penjualannya (berat).` : '') : '',
+    tiles.length ? `PRODUKTIVITAS TIM: ` + tiles.map(t => `${t.title} ${t.key === 'rawat' ? `${fmt(t.cur, 0)} hari kerja` : `rata-rata ${fmt(t.cur, 0)} jjg/hari`}` +
+      `${t.ref ? ` (${t.prevPeriod.label}: ${fmt(t.ref, 0)})` : ''}, ${t.n} mandor [${t.list.map(x => `${x.name} ${x.value}; ${x.sub}`).join(' | ')}]`).join('. ') + '.' : '',
+    inputs.length ? `Kelengkapan input ${monthLong(p)} (vs ${monthLong(q)}): ` + inputs.map(r => `${r.label} ${f0(r.cur)} (${f0(r.ref)})`).join('; ') + '.' : ''
+  ].filter(Boolean).join('\n');
+  return { p, q, flow, tiles, inputs, facts };
 }
 
 /** Label sumbu Rp juta: desimal secukupnya agar nilai kecil (mis. 0,35 jt) tidak semua terbaca "0 jt". */
@@ -1527,6 +1575,17 @@ function dataHeadline(id, d) {
   const pct = v => `${fmt(v * 100, 0)}%`;
   // Alur panen -> muat/jual yang belum tercatat, bulan laporan (bukan kumulatif); umumnya data belum diinput
   const kebocoran = () => {
+    // Slide 8: judul memakai angka yang sama dengan isi slide (saldo belum tercatat terjual s.d. akhir bulan laporan)
+    const fl = (buildRecordTeam(d) || {}).flow;
+    if (fl) {
+      const mon = monthLong(fl.p), ms = BULAN_PENDEK[fl.p.m];
+      const nwH = N && N.share > T.NOWEIGHT_PCT ? [`Penjualan ${fmt(N.share, 0)}% janjang belum diinput`] : [];
+      if (fl.overSold) return [`Input panen ${mon} belum lengkap`, 'Input panen belum lengkap'].concat(nwH);
+      if (fl.balancePct !== null && fl.balancePct >= T.FLOW_LOSS_PCT) return (fl.balancePct <= 100
+        ? [`${fmt(fl.balancePct, 0)}% panen ${mon} belum tercatat terjual`, `${fmt(fl.balancePct, 0)}% panen ${ms} belum tercatat terjual`]
+        : []).concat([`${fmt(fl.balance, 0)} janjang belum tercatat terjual`]).concat(nwH);
+      return nwH.concat([`Panen ${mon} tercatat sampai terjual`, `Panen ${ms} tercatat sampai terjual`]);
+    }
     const c = F && F.cur, p = F && F.prev;
     if (c && !c.overSold && c.lossJjg && c.lossPct >= T.FLOW_LOSS_PCT) {   // belum tercatat > 1 bulan
       const rp = c.lossRp ? `Rp${fmt(c.lossRp / 1e6, 1)} juta` : '';
@@ -1807,7 +1866,7 @@ const STORY = [
   { id: 'blokbiaya', section: 'Perawatan dan Pemupukan', title: 'Biaya Perawatan per Blok',
     q: 'Blok mana yang paling mahal perawatannya per hektar, untuk pekerjaan apa, dan apakah biaya itu diikuti hasil janjang yang baik?',
     link: 'Biaya perawatan dirinci per blok lalu dibandingkan dengan capaian janjang blok itu.' },
-  { id: 'rkh', section: 'Pencatatan dan Produktivitas Tim', title: 'Rencana Kerja Harian (RKH)',
+  { id: 'rkh', section: 'Alur Janjang dan Produktivitas Tim', title: 'Rencana Kerja Harian (RKH)',
     q: 'Berapa RKH yang dibuat di aplikasi setiap bulan dan berapa yang selesai dikerjakan?',
     link: 'Rencana kerja harian di aplikasi dibandingkan dengan yang selesai, sebagai petunjuk ancak yang terlewat.' },
   { id: 'margin', section: 'Keuangan Kebun', title: 'Margin per Hektar',
