@@ -256,6 +256,8 @@ function getSheetData(sheet) {
     flowTrip: readMonthly(values, H.FLOW_TRIP),
     flowSold: readMonthly(values, H.FLOW_SOLD),
     flowSoldNoWeight: readMonthly(values, H.FLOW_SOLD_NOWEIGHT),
+    flowReturn: readMonthly(values, H.FLOW_RETURN || []),
+    flowReturnReason: readMonthly(values, H.FLOW_RETURN_REASON || [], true),
     rkhRaw: readMonthly(values, H.RKH || [], true),
     inputDateRaw: valueRightOf(display, H.INPUT_DATE_LABEL, ''),
     revKg: readMonthly(values, H.REV_KG),
@@ -466,6 +468,7 @@ function getSheetData(sheet) {
   d.upkeepByBlock = buildUpkeepByBlock(d);    // biaya perawatan per blok vs hasil blok (format upkeep "KODE; biaya; blok")
   d.fertStatus = buildFertilizerStatus(d);
   d.flow = buildFlow(d);
+  d.returns = buildReturns(d);
   d.rkh = buildRkh(d);
   // Tonase = berat janjang DIPANEN: penjualan hanya dari janjang yang terjual -> tonase × (terjual ÷ dipanen) × harga
   if (DECK_CONFIG.TONASE_BASIS !== 'terjual' && d.flowSold.length && d.flowPanen.length) {
@@ -1466,7 +1469,8 @@ function buildFlow(d) {
     .filter(p => stages.every(st => valAt(d[st.key], p) !== null));
   // Bulan dengan panen tetapi muat, jual, dan tonase semuanya 0 = penjualan BELUM DIINPUT (bukan tidak ada penjualan):
   // tidak dinilai kebocorannya; panennya tetap dibawa ke bulan berikutnya (sering baru tercatat terjual bulan depan)
-  const salesMissing = months0.filter(p => valAt(d.flowPanen, p) > 0 && stages.slice(1).every(st => !valAt(d[st.key], p)) && !valAt(d.tonase || [], p))
+  // (tonase bisa sudah ada dari tabel utama; tanpa janjang muat & jual, alur bulan itu tetap belum bisa dinilai)
+  const salesMissing = months0.filter(p => valAt(d.flowPanen, p) > 0 && stages.slice(1).every(st => !valAt(d[st.key], p)))
     .map(p => ({ p, panen: valAt(d.flowPanen, p) }));
   const isSM = p => salesMissing.some(x => mkey(x.p) === mkey(p));
   const months = months0;
@@ -1718,3 +1722,103 @@ function bjrBaseMonths(d, soldDen) {
   const cover = all.filter(x => bjrOk(x) && coverOk(x));
   return cover.length ? cover : all.filter(bjrOk);
 }
+
+/* ------------------------------------------------------------------------- */
+/* Janjang pulangan (dikembalikan pembeli) dan alasannya                     */
+/* ------------------------------------------------------------------------- */
+
+/**
+ * Kelompok alasan pulangan -> kemungkinan penyebab & tindak lanjut (sudut pandang pendamping, bukan menyalahkan pekerja).
+ * Dicocokkan berurutan pada teks alasan (huruf kecil).
+ */
+const RETURN_REASONS = [
+  { re: /tanpa alasan|^-$|kosong/, key: 'tanpa', name: 'Tanpa alasan', cause: 'alasan belum diisi di aplikasi', action: 'isi alasan setiap pulangan agar penyebabnya terlihat' },
+  { re: /mentah/, key: 'mentah', name: 'Mentah', cause: 'buah dipanen sebelum matang', action: 'tegaskan kriteria matang panen (brondolan lepas) dan cek di TPH' },
+  { re: /busuk|terlalu matang|restan/, key: 'busuk', name: 'Busuk / terlalu matang', cause: 'buah terlambat dipanen atau terlalu lama menunggu angkut', action: 'jaga rotasi panen dan angkut buah TPH di hari yang sama' },
+  { re: /kecil/, key: 'kecil', name: 'Tandan kecil', cause: 'tandan di bawah syarat pembeli; umum pada tanaman muda atau kurang hara', action: 'pisahkan tandan kecil di TPH; cek hara bila berulang' },
+  { re: /jangkos/, key: 'jangkos', name: 'Jangkos', cause: 'tandan kosong/tidak normal ikut terangkut', action: 'sortasi tandan di TPH sebelum dimuat' },
+  { re: /sortir|sortiran|manual/, key: 'sortir', name: 'Sortiran pembeli', cause: 'disortir manual oleh pembeli', action: 'samakan kriteria mutu dengan pembeli' }
+];
+
+function returnReasonOf(text) {
+  const t = String(text || '').trim().toLowerCase();
+  const r = RETURN_REASONS.find(x => x.re.test(t));
+  return r || { key: 'lain:' + t, name: t ? t.charAt(0).toUpperCase() + t.slice(1) : 'Lainnya', cause: '', action: '' };
+}
+
+/** "236 - mentah, 22 - busuk / terlalu matang" -> [{jjg, text}] (urutan sesuai sel). */
+function parseReturnReasons(s) {
+  const out = [];
+  String(s || '').split(',').forEach(part => {
+    const m = part.trim().match(/^([\d.]+)\s*-\s*(.+)$/);
+    if (m) out.push({ jjg: parseNum(m[1]) || 0, text: m[2].trim() });
+  });
+  return out;
+}
+
+/**
+ * Janjang pulangan per bulan: jumlah, % dari janjang dimuat, nilai TBS (jjg × BJR × harga), alasan.
+ * Kolom ini tidak selalu diisi di aplikasi: bila tidak pernah ada pulangan > 0 maupun alasan, dianggap DATA TIDAK TERSEDIA (null),
+ * bukan "tidak ada pulangan". Bulan dengan 0 setelah kolom dipakai tetap dihitung 0 tetapi disebut "tercatat 0".
+ */
+function buildReturns(d) {
+  const ser = d.flowReturn || [], rs = d.flowReturnReason || [];
+  if (!ser.length) return null;
+  const reasonsAt = p => { const x = rs.find(z => mkey(z.p) === mkey(p)); return x ? parseReturnReasons(x.value) : []; };
+  const used = ser.some(x => x.value > 0) || rs.some(x => parseReturnReasons(x.value).length);
+  if (!used) return null;
+  const priceSer = d.hargaJual && d.hargaJual.length ? d.hargaJual : (d.revKg || []);
+  const ps = seriesStats(priceSer), avgPrice = ps ? ps.avg : null;
+  const months = ser.filter(x => x.value !== null && mkey(x.p) !== d.rampMonth).map(x => {
+    const muat = valAt(d.flowMuat || [], x.p), reasons = reasonsAt(x.p), rsum = reasons.reduce((a, r) => a + r.jjg, 0);
+    // total 0 tetapi alasan terisi = total belum diisi: pakai jumlah per alasan
+    const totalMissing = !x.value && rsum > 0;
+    x = Object.assign({}, x, { value: totalMissing ? rsum : x.value });
+    const bjr = valAt(d.bjrSoldMonthly || [], x.p) || d.bjrSoldCum || null, price = valAt(priceSer, x.p) || avgPrice;
+    return { p: x.p, label: x.label, jjg: x.value, muat, rate: muat ? (x.value / muat) * 100 : null, reasons, totalMissing,
+      reasonSum: rsum, rp: bjr && price ? x.value * bjr * price : null };
+  });
+  if (!months.length) return null;
+  const cur = (d.reportP && months.find(m => mkey(m.p) === mkey(d.reportP))) || months[months.length - 1];
+  const prevP = { y: cur.p.m === 0 ? cur.p.y - 1 : cur.p.y, m: cur.p.m === 0 ? 11 : cur.p.m - 1 };
+  const prev = months.find(m => mkey(m.p) === mkey(prevP)) || null;
+  const withData = months.filter(m => m.jjg > 0 && m.rate !== null);
+  const avgRate = withData.length ? withData.reduce((a, m) => a + m.rate, 0) / withData.length : null;
+  // Rekap alasan per kelompok (bulan laporan & seluruh periode); porsi dihitung dari total janjang yang beralasan
+  const group = list => {
+    const g = {};
+    list.forEach(r => { const c = returnReasonOf(r.text); g[c.key] = g[c.key] || { key: c.key, name: c.name, cause: c.cause, action: c.action, jjg: 0 }; g[c.key].jjg += r.jjg; });
+    const arr = Object.keys(g).map(k => g[k]).sort((a, b) => b.jjg - a.jjg), tot = arr.reduce((a, x) => a + x.jjg, 0);
+    arr.forEach(x => { x.pct = tot ? (x.jjg / tot) * 100 : 0; });
+    return arr;
+  };
+  const curReasons = group(cur.reasons), allReasons = group([].concat.apply([], months.map(m => m.reasons)));
+  const noReason = curReasons.find(x => x.key === 'tanpa');
+  const total = months.reduce((a, m) => a + m.jjg, 0), muatTot = months.reduce((a, m) => a + (m.muat || 0), 0);
+  return { months, cur, prev, avgRate, nData: withData.length, curReasons, allReasons, total, totalRate: muatTot ? (total / muatTot) * 100 : null,
+    totalRp: months.reduce((a, m) => a + (m.rp || 0), 0) || null, noReasonPct: noReason ? noReason.pct : 0,
+    topCause: curReasons.find(x => x.key !== 'tanpa') || null,
+    reasonGap: cur.jjg && cur.reasonSum && Math.abs(cur.reasonSum - cur.jjg) > Math.max(5, cur.jjg * 0.05) };
+}
+
+function describeReturns(d) {
+  const R = d.returns;
+  if (!R) return '';
+  const c = R.cur, f = x => fmt(x, 0), pc = x => (x === null || x === undefined ? '-' : `${fmt(x, 1)}%`);
+  const L = [`JANJANG PULANGAN (dikembalikan pembeli PKS/agen; kolom ini tidak selalu diisi di aplikasi, jadi angka 0 bisa berarti belum diisi):`,
+    `- ${monthLong(c.p)}: ${f(c.jjg)} jjg${c.totalMissing ? ' (total pulangan belum diisi; dari jumlah per alasan)' : ''}${c.rate === null ? ' (janjang dimuat bulan ini belum diinput, persentase belum bisa dihitung)' : ` = ${pc(c.rate)} dari janjang dimuat`}${c.rp ? ` ≈ ${fmtRp(c.rp)} nilai TBS` : ''}` +
+      `${R.prev ? `; ${monthLong(R.prev.p)} ${f(R.prev.jjg)} jjg (${pc(R.prev.rate)})` : ''}${R.avgRate !== null ? `; rata-rata ${R.nData} bulan yang tercatat ${pc(R.avgRate)}` : ''}.`,
+    c.reasons.length ? `- Alasan ${monthShort(c.p)}: ${R.curReasons.map(x => `${x.name} ${f(x.jjg)} jjg (${fmt(x.pct, 0)}%)${x.cause ? ` — ${x.cause}` : ''}`).join('; ')}.` : `- Alasan ${monthShort(c.p)}: tidak diisi.`,
+    R.reasonGap ? `- Catatan: jumlah per alasan (${f(c.reasonSum)}) tidak sama dengan total pulangan (${f(c.jjg)}); satu janjang bisa diberi lebih dari satu alasan atau sebagian alasan belum diisi.` : '',
+    `- Seluruh periode: ${f(R.total)} jjg (${pc(R.totalRate)} dari dimuat)${R.totalRp ? ` ≈ ${fmtRp(R.totalRp)}` : ''}; alasan terbanyak: ${R.allReasons.slice(0, 3).map(x => `${x.name} ${fmt(x.pct, 0)}%`).join(', ')}.`,
+    `- Per bulan: ${R.months.map(m => `${m.label} ${f(m.jjg)} (${pc(m.rate)})`).join(', ')}.`,
+    `- Batas perhatian: ${DECK_CONFIG.THRESHOLDS.RETURN_PCT}% dari janjang dimuat. "Tanpa alasan" = alasan belum diisi (data, bukan kesalahan pekerja).`
+  ].filter(Boolean);
+  const T = DECK_CONFIG.THRESHOLDS;
+  if (c.rate !== null && c.rate > T.RETURN_PCT) L.push(`PERLU DICEK: janjang pulangan ${monthLong(c.p)} ${pc(c.rate)} dari janjang dimuat (di atas batas ${T.RETURN_PCT}%), ${f(c.jjg)} jjg${c.rp ? ` ≈ ${fmtRp(c.rp)}` : ''}` +
+    `${R.topCause ? `; alasan terbanyak ${R.topCause.name.toLowerCase()} (${fmt(R.topCause.pct, 0)}%), biasanya karena ${R.topCause.cause}` : ''}.`);
+  if (R.noReasonPct >= T.RETURN_NOREASON_PCT && c.jjg >= 20) L.push(`PERLU DICEK: ${fmt(R.noReasonPct, 0)}% janjang pulangan ${monthLong(c.p)} belum diisi alasannya di aplikasi, sehingga penyebabnya belum dapat dipastikan.`);
+  if (c.totalMissing) L.push(`PERLU DICEK: total janjang pulangan ${monthLong(c.p)} tercatat 0 padahal alasan terisi ${f(c.reasonSum)} jjg; lengkapi total pulangan di aplikasi.`);
+  return L.join('\n');
+}
+

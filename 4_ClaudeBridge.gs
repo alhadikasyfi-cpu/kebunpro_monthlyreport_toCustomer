@@ -621,6 +621,8 @@ function fallbackActions(data, pageOf) {
 function fallbackAnomalies(detected) {
   const why = t => /ANOMALI DATA|TIDAK KONSISTEN/.test(t) ? ['Dua tabel berbeda untuk hal yang sama; laporan bisa keliru.', 'Samakan sumber data. PIC: admin kebun · sebelum laporan berikut.']
     : /NEGATIF/.test(t) ? ['Biaya melebihi pendapatan; bila berulang, kebun merugi.', 'Cek rincian biaya bulan itu. PIC: owner · bulan ini.']
+    : /pulangan[^.]*belum diisi alasannya/.test(t) ? ['Penyebab janjang dikembalikan pembeli belum terlihat.', 'Isi alasan setiap pulangan di aplikasi. PIC: admin kebun · mulai minggu ini.']
+    : /janjang pulangan/.test(t) ? ['Janjang yang dikembalikan pembeli tidak menjadi uang.', 'Sortasi buah di TPH sesuai kriteria pembeli. PIC: mandor panen · mulai minggu ini.']
     : /RKH/.test(t) ? ['Tanpa RKH, rotasi panen di lapangan tidak bisa dibandingkan dengan rencananya.', 'Isi RKH tiap hari untuk ancak panen & rawat. PIC: asisten/mandor · mulai minggu ini.']
     : /TIDAK BISA DIUKUR/.test(t) ? ['Input panen belum lengkap; alur panen ke muat tidak bisa dinilai.', 'Input semua janjang panen setiap hari. PIC: mandor panen · mulai minggu ini.']
     : /tidak ada janjang terjual tercatat/.test(t) ? ['Satu bulan panen tanpa penjualan tercatat; pendapatan belum masuk laporan.', 'Input penjualan bulan itu. PIC: admin kebun · minggu ini.']

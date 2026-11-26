@@ -115,6 +115,8 @@ const DECK_CONFIG = {
     NEW_BLOCK_SHARE: 0.15,      // blok baru > 15% luas daftar blok bulan itu -> "lonjakan blok baru"
     MUAT_VS_PANEN: 0.7,         // JJG dimuat < 70% JJG dipanen -> risiko restan (dari tabel mandor)
     FLOW_LOSS_PCT: 5,           // janjang belum tercatat antar-tahap > 5% -> alur panen ke muat tidak tercatat
+    RETURN_PCT: 2,              // janjang pulangan > 2% dari janjang dimuat (bulan laporan) -> temuan + R27
+    RETURN_NOREASON_PCT: 30,    // > 30% janjang pulangan tanpa alasan -> R28 (isi alasan di aplikasi)
     RKH_MIN_DONE: 0.8,          // RKH selesai < 80% dari yang dibuat (bulan laporan) -> temuan + R26
     FLOW_EXCESS_PCT: 2,         // tahap berikut > tahap sebelumnya lebih dari 2% (kumulatif) -> pencatatan tidak konsisten
     REPLANT_AGE: 25,            // umur > 25 tahun -> kandidat peremajaan
@@ -291,6 +293,8 @@ const DECK_CONFIG = {
     FLOW_MUAT: ['jjg dimuat', 'janjang dimuat', 'janjang muat', 'jjg muat'],
     FLOW_TRIP: ['jjg masuk trip', 'janjang masuk trip', 'jjg delivery'],
     FLOW_SOLD: ['jjg terjual', 'janjang terjual'],                       // terjual DENGAN berat (= total_sale_jjg)
+    FLOW_RETURN: ['janjang pulangan', 'jjg pulangan'],                     // janjang dikembalikan pembeli (PKS/agen)
+    FLOW_RETURN_REASON: ['pulanganreason', 'pulangan reason', 'alasan pulangan'],   // "236 - mentah, 22 - busuk / terlalu matang"
     FLOW_SOLD_NOWEIGHT: ['jjg terjual tanpa berat', 'janjang terjual tanpa berat'],   // = data penjualan (berat) belum diinput
     // Opsional, kolom di tabel bulanan utama: RKH (Rencana Kerja Harian) per bulan, isi "dibuat; selesai", mis. "45; 30".
     // Header "RKH count (Created; completed)". Kolom tidak ada / kosong / 0 = RKH belum diisi.

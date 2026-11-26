@@ -1122,6 +1122,35 @@ function buildTopics(d) {
       { name: 'Penjualan sudah diinput', series: d.saleJjg, color: C.GREEN },
       { name: 'Penjualan belum diinput', series: d.noWeightJjg, color: C.WARNING }], { labelFmt: f0, axisFmt: f0 })
   });
+  // --- Janjang pulangan (dikembalikan pembeli) dan alasannya: hanya bila kolomnya diisi di aplikasi ---
+  const RT = d.returns;
+  if (RT) {
+    const lim = DECK_CONFIG.THRESHOLDS.RETURN_PCT, c = RT.cur;
+    T.push({
+      id: 'pulangan', title: 'Janjang Pulangan per Bulan',
+      visual: `bar per bulan: janjang pulangan sebagai % dari janjang dimuat, dengan garis batas perhatian ${lim}%`,
+      facts: describeReturns(d),
+      fallback: `${monthLong(c.p)}: ${fmt(c.jjg, 0)} janjang dikembalikan pembeli` +
+        (c.rate !== null ? ` (${fmt(c.rate, 1)}% dari janjang dimuat${RT.avgRate !== null ? `; rata-rata ${fmt(RT.avgRate, 1)}%` : ''})` : '') +
+        (c.rp ? `, nilai TBS ±${fmtRpShort(c.rp)}` : '') + '.' +
+        (RT.curReasons[0] ? ` Alasan terbanyak: ${RT.curReasons[0].name.toLowerCase()} (${fmt(RT.curReasons[0].pct, 0)}%).` : ''),
+      draw: b => drawBarChart(b, RT.months.map(m => ({ p: m.p, label: m.label, value: m.rate })), { labelFmt: v => `${fmt(v, 1)}%`, axisFmt: v => `${fmt(v, 1)}%`,
+        extraLines: [{ series: RT.months.map(m => ({ p: m.p, label: m.label, value: lim })), color: C.DANGER, dashed: true }],
+        legend: [{ name: 'Pulangan (% dari dimuat)', type: 'bar', color: C.GREEN }, { name: `Batas perhatian ${lim}%`, type: 'line', color: C.DANGER, dashed: true }] })
+    });
+    const rows = RT.allReasons.map(x => { const cr = RT.curReasons.find(z => z.key === x.key);
+      return [x.name, cr ? fmt(cr.jjg, 0) : '0', cr ? `${fmt(cr.pct, 0)}%` : '-', fmt(x.jjg, 0), `${fmt(x.pct, 0)}%`, x.cause ? `${x.cause}; ${x.action}` : '-']; });
+    if (rows.length) T.push({
+      id: 'pulanganalasan', title: 'Alasan Janjang Pulangan',
+      visual: `tabel alasan pulangan: jumlah dan porsi ${monthShort(c.p)} vs seluruh periode, kemungkinan penyebab dan tindak lanjut`,
+      facts: describeReturns(d),
+      fallback: RT.topCause ? `Penyebab pulangan terbanyak ${monthLong(c.p)}: ${RT.topCause.name.toLowerCase()} (${fmt(RT.topCause.pct, 0)}%), biasanya karena ${RT.topCause.cause}. Tindak lanjut: ${RT.topCause.action}.` +
+          (RT.noReasonPct >= DECK_CONFIG.THRESHOLDS.RETURN_NOREASON_PCT ? ` ${fmt(RT.noReasonPct, 0)}% pulangan belum diisi alasannya.` : '')
+        : `Alasan pulangan ${monthLong(c.p)} belum diisi di aplikasi, sehingga penyebabnya belum dapat dipastikan.`,
+      rows, table: { headers: ['Alasan', `${monthShort(c.p)}\njjg`, `${monthShort(c.p)}\nporsi`, 'Periode\njjg', 'Periode\nporsi', 'Kemungkinan penyebab; tindak lanjut'],
+        o: { colWidths: [1.6, 0.9, 0.9, 1.0, 0.9, 4.2], rowHeight: 26, headerHeight: 34, numCols: [1, 2, 3, 4] }, perPage: 8 }
+    });
+  }
   const U = d.unsale;
   if (U && U.blocks.length) T.push({
     id: 'blokunsale', title: 'Blok yang Penjualannya Belum Tercatat',
@@ -1255,7 +1284,7 @@ const MAIN_GROUPS = [
     question: 'Blok mana yang paling menahan hasil kebun, seberapa jauh dari standar, dan apa tindak lanjutnya?' },
   { id: 'm_rawat', title: 'Perawatan dan Pemupukan', members: ['upkeep', 'upkeepakt', 'blokbiaya', 'pupuk', 'tanah'],
     question: 'Untuk pekerjaan apa biaya perawatan bulan ini, apakah wajar dibanding biasanya, dan apakah pemupukan sudah cukup?' },
-  { id: 'm_catat', title: 'Alur Janjang dan Produktivitas Tim', members: ['alurjjg', 'tanpaberat', 'restan', 'blokunsale', 'rkh', 'mandorpanen', 'mandormuat', 'rawat'],
+  { id: 'm_catat', title: 'Alur Janjang dan Produktivitas Tim', members: ['alurjjg', 'pulangan', 'pulanganalasan', 'tanpaberat', 'restan', 'blokunsale', 'rkh', 'mandorpanen', 'mandormuat', 'rawat'],
     question: 'Dari janjang yang dipanen bulan ini, berapa yang sudah dimuat dan tercatat terjual, berapa yang belum, dan seberapa produktif tim panen, muat, dan rawat dibanding bulan lalu?' }
 ];
 
@@ -1368,6 +1397,10 @@ function buildRecordTeam(d) {
       balancePct: panen ? (c.balance / panen) * 100 : null, balanceRp: c.balance && c.bjrUsed && c.price ? c.balance * c.bjrUsed * c.price : null,
       aged: c.agedStock, noWeight: c.soldNoWeight || 0, muatOver: muat > panen * (1 + DECK_CONFIG.THRESHOLDS.FLOW_EXCESS_PCT / 100),
       overSold: c.overSold, salesMissing: c.salesMissing };
+    // Janjang pulangan bulan yang sama (hanya bila kolom pulangan dipakai di aplikasi)
+    const RT = d.returns, rm = RT && RT.months.find(m => mkey(m.p) === mkey(c.p));
+    if (rm) flow.ret = { jjg: rm.jjg, rate: rm.rate, rp: rm.rp, totalMissing: rm.totalMissing,
+      top: mkey(RT.cur.p) === mkey(c.p) ? RT.curReasons[0] || null : null, high: rm.rate !== null && rm.rate > DECK_CONFIG.THRESHOLDS.RETURN_PCT };
   }
 
   // Produktivitas tim: bulan penuh terakhir (acuan) vs sebelumnya, rata-rata tertimbang hari kerja
@@ -1409,7 +1442,9 @@ function buildRecordTeam(d) {
       `. Belum tercatat terjual s.d. akhir bulan: ${fmt(flow.balance, 0)} jjg = ${flow.carryIn ? `sisa sebelumnya ${fmt(flow.carryIn, 0)} + ` : ''}panen ${fmt(flow.panen, 0)} − terjual ${fmt(flow.sold, 0)}` +
       `${flow.balanceRp ? ` ≈ ${fmtRp(flow.balanceRp)}` : ''}${flow.balancePct !== null ? ` (${fmt(flow.balancePct, 0)}% dari panen bulan ini)` : ''}.` +
       (flow.muatOver ? ' Dimuat lebih banyak dari dipanen: restan bulan lalu ikut dimuat, atau sebagian panen belum diinput.' : '') +
-      (flow.noWeight ? ` ${fmt(flow.noWeight, 0)} janjang terjual belum diinput data penjualannya (berat).` : '') : '',
+      (flow.noWeight ? ` ${fmt(flow.noWeight, 0)} janjang terjual belum diinput data penjualannya (berat).` : '') +
+      (flow.ret ? ` Janjang pulangan (dikembalikan pembeli): ${fmt(flow.ret.jjg, 0)} jjg${flow.ret.rate !== null ? ` = ${fmt(flow.ret.rate, 1)}% dari dimuat (batas perhatian ${DECK_CONFIG.THRESHOLDS.RETURN_PCT}%)` : ''}` +
+        `${flow.ret.top ? `, alasan terbanyak ${flow.ret.top.name.toLowerCase()} ${fmt(flow.ret.top.pct, 0)}%` : ''}.` : '') : '',
     tiles.length ? `PRODUKTIVITAS TIM: ` + tiles.map(t => `${t.title} ${t.key === 'rawat' ? `${fmt(t.cur, 0)} hari kerja` : `rata-rata ${fmt(t.cur, 0)} jjg/hari`}` +
       `${t.ref ? ` (${t.prevPeriod.label}: ${fmt(t.ref, 0)})` : ''}, ${t.n} mandor [${t.list.map(x => `${x.name} ${x.value}; ${x.sub}`).join(' | ')}]`).join('. ') + '.' : '',
     inputs.length ? `Kelengkapan input ${monthLong(p)} (vs ${monthLong(q)}): ` + inputs.map(r => `${r.label} ${f0(r.cur)} (${f0(r.ref)})`).join('; ') + '.' : ''
@@ -1581,9 +1616,11 @@ function dataHeadline(id, d) {
       const mon = monthLong(fl.p), ms = BULAN_PENDEK[fl.p.m];
       const nwH = N && N.share > T.NOWEIGHT_PCT ? [`Penjualan ${fmt(N.share, 0)}% janjang belum diinput`] : [];
       if (fl.overSold) return [`Input panen ${mon} belum lengkap`, 'Input panen belum lengkap'].concat(nwH);
-      if (fl.balancePct !== null && fl.balancePct >= T.FLOW_LOSS_PCT) return (fl.balancePct <= 100
+      // Persen dari panen hanya bila tidak ada sisa bulan sebelumnya (saldo = panen bulan ini saja); selain itu sebut jumlah janjang
+      if (fl.balancePct !== null && fl.balancePct >= T.FLOW_LOSS_PCT) return (!fl.carryIn && fl.balancePct <= 100
         ? [`${fmt(fl.balancePct, 0)}% panen ${mon} belum tercatat terjual`, `${fmt(fl.balancePct, 0)}% panen ${ms} belum tercatat terjual`]
-        : []).concat([`${fmt(fl.balance, 0)} janjang belum tercatat terjual`]).concat(nwH);
+        : []).concat([`${fmt(fl.balance, 0)} janjang belum tercatat terjual s.d. ${ms}`, `${fmt(fl.balance, 0)} jjg belum tercatat terjual s.d. ${ms}`,
+          `${fmt(fl.balance, 0)} janjang belum tercatat terjual`]).concat(nwH);
       return nwH.concat([`Panen ${mon} tercatat sampai terjual`, `Panen ${ms} tercatat sampai terjual`]);
     }
     const c = F && F.cur, p = F && F.prev;
@@ -1768,7 +1805,7 @@ function drawProfitChart(b, rev, cost) {
 const SHORT_TITLES = {
   scorecard: 'Tabel kinerja', blokprod: 'Semua blok', tanah: 'Jenis tanah', pupuk: 'Status pupuk', produksi: 'Tren TBS terjual', panen: 'Luas panen', yield: 'Yield per ha', marihat: 'Std. Marihat',
   jjg: 'Janjang/ha', bjr: 'BJR', umur: 'Umur tanaman', umuryield: 'Umur vs yield', replanting: 'Replanting',
-  alurjjg: 'Alur janjang', restan: 'Panen vs muat', tanpaberat: 'Belum diinput', blokunsale: 'Jual per blok',
+  alurjjg: 'Alur janjang', restan: 'Panen vs muat', tanpaberat: 'Belum diinput', pulangan: 'Pulangan', pulanganalasan: 'Alasan pulangan', blokunsale: 'Jual per blok',
   laba: 'Laba kotor', biayakg: 'Biaya per kg', efisiensi: 'Porsi biaya', biayakomposisi: 'Komposisi biaya', biayaha: 'Biaya per ha',
   upkeep: 'Perawatan per bulan', upkeepakt: 'Pekerjaan perawatan', blokbiaya: 'Perawatan per blok', rkh: 'RKH', margin: 'Margin per ha', mandorpanen: 'Mandor panen', mandormuat: 'Mandor muat', rawat: 'Mandor rawat'
 };
@@ -1812,6 +1849,12 @@ const STORY = [
   { id: 'tanpaberat', section: 'Alur Panen ke Muat Tidak Tercatat', title: 'Data Penjualan Belum Diinput',
     q: 'Berapa janjang yang sudah keluar kebun tetapi data penjualannya (berat/tiket timbang) belum diinput, dan berapa nilainya?',
     link: 'Janjang yang sudah keluar kebun belum tentu diinput penjualannya; selama belum diinput, tonase dan pendapatan tampak lebih kecil.' },
+  { id: 'pulangan', section: 'Alur Panen ke Muat Tidak Tercatat', title: 'Janjang Pulangan per Bulan',
+    q: 'Berapa persen janjang yang dimuat dikembalikan pembeli setiap bulan, dan apakah di atas batas perhatian?',
+    link: 'Dari janjang yang sudah dimuat, sebagian dikembalikan pembeli (pulangan); ini mengurangi janjang yang menjadi uang.' },
+  { id: 'pulanganalasan', section: 'Alur Panen ke Muat Tidak Tercatat', title: 'Alasan Janjang Pulangan',
+    q: 'Mengapa janjang dikembalikan pembeli (mentah, busuk, kecil, jangkos), dan apa tindak lanjutnya di kebun?',
+    link: 'Rincian alasan pulangan pada slide sebelumnya, beserta kemungkinan penyebab dan tindak lanjutnya.' },
   { id: 'blokunsale', section: 'Alur Panen ke Muat Tidak Tercatat', title: 'Blok yang Penjualannya Belum Tercatat',
     q: 'Blok mana yang dipanen tetapi penjualannya berulang kali belum diinput ke aplikasi?',
     link: 'Menelusuri pencatatan sampai ke tingkat blok: blok yang dipanen tetapi penjualannya belum diinput.' },

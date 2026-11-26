@@ -804,12 +804,22 @@ function drawRecordTeam(b, rt) {
     const l1 = F.overSold ? `Terjual melebihi panen ${mon} + sisa sebelumnya: sebagian panen belum diinput.`
       : `Belum tercatat terjual s.d. akhir ${mon}: ${fmt(F.balance, 0)} jjg${F.balanceRp ? ` ≈ ${fmtRpShort(F.balanceRp)}` : ''}` +
         ` (${F.carryIn ? `sisa sebelumnya ${fmt(F.carryIn, 0)} + ` : ''}panen ${fmt(F.panen, 0)} − terjual ${fmt(F.sold, 0)})`;
-    const l2 = [F.muatOver && !F.overSold ? 'Dimuat > dipanen: restan bulan lalu ikut dimuat, atau sebagian panen belum diinput.' : '',
+    const l2 = [rt.p && mkey(rt.p) !== mkey(F.p) ? `Muat dan penjualan ${monthShort(rt.p)} belum diinput, alur memakai ${mon}.` : '',
+      F.muatOver && !F.overSold ? 'Dimuat > dipanen: restan bulan lalu ikut dimuat, atau sebagian panen belum diinput.' : '',
       F.noWeight ? `${fmt(F.noWeight, 0)} janjang terjual belum diinput data penjualannya (berat).` : '',
       !F.muatOver && !F.noWeight && bad ? 'Pastikan muat dan penjualan diinput setiap hari agar alur tercatat lengkap.' : ''].filter(Boolean).join(' ');
     const h1 = estLines(l1, T.CAPTION + 0.5, A.width) * (T.CAPTION + 0.5) * 1.3;
     b.text(l1, A.left, y, A.width, h1, { size: T.CAPTION + 0.5, weight: W.HEAVY, color: F.overSold || bad ? C.DANGER : C.GREEN, align: 'START', valign: 'TOP', noGroup: true, lineSpacing: 115 });
     y += h1 + 2;
+    // Janjang pulangan bulan ini (kolom pulangan dipakai): jumlah, % dari dimuat, alasan terbanyak
+    const R = F.ret;
+    if (R && R.jjg > 0) {
+      const l3 = `Pulangan ${mon}: ${fmt(R.jjg, 0)} jjg${R.rate !== null ? ` (${fmt(R.rate, 1)}% dari dimuat)` : ''}${R.rp ? ` ≈ ${fmtRpShort(R.rp)}` : ''}` +
+        (R.top ? (R.top.key === 'tanpa' ? `; ${fmt(R.top.pct, 0)}% belum diisi alasannya` : `; terbanyak ${R.top.name.toLowerCase()} ${fmt(R.top.pct, 0)}%`) : '');
+      const h3 = estLines(l3, T.CAPTION, A.width) * T.CAPTION * 1.3;
+      b.text(l3, A.left, y, A.width, h3, { size: T.CAPTION, weight: W.STRONG, color: R.high ? C.WARNING : C.INK, align: 'START', valign: 'TOP', noGroup: true, lineSpacing: 115 });
+      y += h3 + 1;
+    }
     if (l2) { const h2 = estLines(l2, T.CAPTION, A.width) * T.CAPTION * 1.3;
       b.text(l2, A.left, y, A.width, h2, { size: T.CAPTION, color: C.MUTED, align: 'START', valign: 'TOP', noGroup: true, lineSpacing: 115 }); y += h2; }
     y += L.SECTION_GAP;
@@ -819,7 +829,7 @@ function drawRecordTeam(b, rt) {
     head(`Produktivitas tim ${t0.period.label}`, y, t0.prevPeriod ? `pembanding = ${t0.prevPeriod.label}` : '');
     y += 20;
     const n = rt.tiles.length, gap = L.CARD_GAP, w = (A.width - gap * (n - 1)) / n, h = A.top + A.height - y, P = 9, inner = w - 2 * P;
-    const rowH = 23, maxRows = Math.max(1, Math.floor((h - 70) / rowH));
+    const rowH = 23, fitRows = Math.floor((h - 70) / rowH);
     rt.tiles.forEach((t, i) => {
       const x = A.left + i * (w + gap);
       b.card(x, y, w, h);
@@ -835,12 +845,14 @@ function drawRecordTeam(b, rt) {
       let note = 'belum ada pembanding', nc = C.MUTED;
       if (t.ref && t.key === 'rawat') { note = `${t.prevPeriod.label}: ${fmt(t.ref, 0)} hari kerja`; nc = C.MUTED; }
       else if (t.ref) { const ch = (t.cur / t.ref - 1) * 100;
-        note = `${ch >= 0 ? '▲' : '▼'} ${fmt(Math.abs(ch), 0)}% vs ${t.prevPeriod.label} (${fmt(t.ref, 0)})`; nc = ch >= 0 ? C.GREEN : C.WARNING; }
+        note = Math.round(Math.abs(ch)) === 0 ? `sama dengan ${t.prevPeriod.label} (${fmt(t.ref, 0)})` : `${ch >= 0 ? '▲' : '▼'} ${fmt(Math.abs(ch), 0)}% vs ${t.prevPeriod.label} (${fmt(t.ref, 0)})`;
+        nc = Math.round(Math.abs(ch)) === 0 ? C.MUTED : ch >= 0 ? C.GREEN : C.WARNING; }
       txt(note, x + P, yy, inner, 11, { size: T.CAPTION - 0.3, weight: W.STRONG, color: nc });
       yy += 15;
       b.line(x + P, yy, x + w - P, yy, C.BORDER, 0.75);
       yy += 5;
-      const shown = t.list.slice(0, maxRows);
+      // baris "+N mandor lain" ikut dihitung agar tidak keluar dari kartu
+      const shown = t.list.slice(0, Math.max(1, t.list.length > fitRows ? Math.floor((h - 70 - 11) / rowH) : fitRows));
       shown.forEach(r => {
         const vw = estWidth(r.value, T.CAPTION, true) + 2;
         txt(fit(r.name, T.CAPTION, inner - vw - 4, true), x + P, yy, inner - vw - 4, 11, { size: T.CAPTION, weight: W.STRONG, color: C.INK });

@@ -722,7 +722,22 @@ const fl8 = s8.rt.flow;
 ok(fl8 && fl8.balance === fl8.carryIn + fl8.panen - fl8.sold || (fl8 && fl8.aged > 0) || (fl8 && fl8.overSold), 'slide 8: saldo belum tercatat terjual = sisa sebelumnya + panen − terjual');
 ok(/Alur janjang/.test(s8.req) && /Produktivitas tim/.test(s8.req) && s8.rt.tiles.some(t => t.key === 'panen') &&
    s8.texts.every(t => t.y + t.h <= CSA.top + CSA.height + 1 && t.x + t.w <= CSA.left + CSA.width + 1) &&
-   (!fl8 || fl8.overSold || fl8.balancePct < run2('DECK_CONFIG.THRESHOLDS.FLOW_LOSS_PCT') || fl8.balancePct > 100 || s8.h.indexOf(run2('fmt(' + fl8.balancePct + ', 0)') + '%') === 0),
+   (!fl8 || fl8.overSold || fl8.balancePct < run2('DECK_CONFIG.THRESHOLDS.FLOW_LOSS_PCT') || s8.h.indexOf(run2('fmt(' + fl8.balancePct + ', 0)') + '%') === 0 || s8.h.indexOf(run2('fmt(' + fl8.balance + ', 0)')) === 0),
   `slide 8 tergambar (alur + kartu tim di dalam area isi); judul "${s8.h}" memakai angka yang sama dengan isi slide`);
+
+// Janjang pulangan: alasan diurai & dikelompokkan; tidak dianalisis bila kolom tidak pernah diisi; total 0 tapi alasan terisi
+const rtP = run2(`(function(){ const P = m => ({ y: 2026, m });
+  const base = { reportP: P(10), flowMuat: [{p:P(9),value:12000},{p:P(10),value:10000}], hargaJual: [{p:P(9),value:3000},{p:P(10),value:3000}], bjrSoldCum: 20, bjrSoldMonthly: [] };
+  const a = buildReturns(Object.assign({}, base, { flowReturn: [{p:P(9),label:'Okt 26',value:120},{p:P(10),label:'Nov 26',value:300}],
+    flowReturnReason: [{p:P(9),value:'100 - mentah, 20 - tanpa alasan'},{p:P(10),value:'150 - busuk / terlalu matang, 100 - mentah, 50 - tanpa alasan'}] }));
+  const none = buildReturns(Object.assign({}, base, { flowReturn: [{p:P(9),label:'Okt 26',value:0},{p:P(10),label:'Nov 26',value:0}], flowReturnReason: [{p:P(9),value:'-'},{p:P(10),value:'-'}] }));
+  const miss = buildReturns(Object.assign({}, base, { flowReturn: [{p:P(10),label:'Nov 26',value:0}], flowReturnReason: [{p:P(10),value:'80 - kecil'}] }));
+  const dd = Object.assign({}, base, { returns: a }), d28 = Object.assign({}, base, { returns: buildReturns(Object.assign({}, base, { flowReturn: [{p:P(10),label:'Nov 26',value:300}], flowReturnReason: [{p:P(10),value:'300 - tanpa alasan'}] })) });
+  return { rate: a.cur.rate, top: a.topCause.name, pct: a.curReasons[0].pct, none, missJ: miss.cur.jjg, missF: miss.cur.totalMissing,
+    r27: !!RECO_CATALOG.find(r => r.code === 'R27').when(dd), r28: !!RECO_CATALOG.find(r => r.code === 'R28').when(d28), r28a: !!RECO_CATALOG.find(r => r.code === 'R28').when(dd),
+    txt: describeReturns(dd) }; })()`);
+ok(rtP.rate === 3 && rtP.top === 'Busuk / terlalu matang' && rtP.pct === 50 && rtP.none === null && rtP.missJ === 80 && rtP.missF &&
+   rtP.r27 && rtP.r28 && !rtP.r28a && /PERLU DICEK: janjang pulangan November 2026 3,0%/.test(rtP.txt),
+  'janjang pulangan: % dari dimuat, alasan terbanyak, R27 (di atas 2%) & R28 (tanpa alasan); kolom yang tidak pernah diisi tidak dianalisis');
 
 console.log(process.exitCode ? '\nADA YANG GAGAL' : '\nSEMUA UJI LOLOS');

@@ -243,6 +243,24 @@ const RECO_CATALOG = [
       if (!c || c.done === null || c.done >= DECK_CONFIG.THRESHOLDS.RKH_MIN_DONE) return null;
       return { evidence: `RKH ${monthShort(c.p)} selesai ${fmt(c.completed, 0)} dari ${fmt(c.created, 0)} (${fmt(c.done * 100, 0)}%)`, priority: c.done < 0.5 ? 'tinggi' : 'sedang' }; } },
 
+  { code: 'R27', title: 'Kurangi janjang pulangan lewat sortasi TPH',
+    action: 'Sortasi buah di TPH sebelum dimuat sesuai kriteria pembeli (matang, tidak busuk, tandan normal), dan bahas alasan pulangan terbanyak bersama mandor panen setiap minggu.',
+    signals: 'Janjang yang dikembalikan pembeli di atas batas perhatian dari janjang yang dimuat.',
+    topics: ['pulangan', 'pulanganalasan'],
+    // Hanya bila kolom pulangan diisi di aplikasi; alasan "tanpa alasan" saja ditangani R28
+    when: d => { const R = d.returns, c = R && R.cur, lim = DECK_CONFIG.THRESHOLDS.RETURN_PCT;
+      if (!c || c.rate === null || c.rate <= lim || !R.topCause) return null;
+      return { evidence: `pulangan ${monthShort(c.p)} ${fmt(c.rate, 1)}% dari dimuat (${fmt(c.jjg, 0)} jjg${c.rp ? ` ≈ ${fmtRp(c.rp)}` : ''}); terbanyak ${R.topCause.name.toLowerCase()} ${fmt(R.topCause.pct, 0)}%`,
+        priority: c.rate > 2 * lim ? 'tinggi' : 'sedang' }; } },
+
+  { code: 'R28', title: 'Isi alasan janjang pulangan di aplikasi',
+    action: 'Catat setiap janjang pulangan beserta alasannya (mentah, busuk, kecil, jangkos) di hari yang sama, agar penyebab pulangan dan tindak lanjutnya bisa ditentukan.',
+    signals: 'Sebagian besar janjang pulangan belum diisi alasannya di aplikasi.',
+    topics: ['pulanganalasan', 'pulangan'],
+    when: d => { const R = d.returns, c = R && R.cur;
+      if (!c || c.jjg < 20 || R.noReasonPct < DECK_CONFIG.THRESHOLDS.RETURN_NOREASON_PCT) return null;
+      return { evidence: `${fmt(R.noReasonPct, 0)}% dari ${fmt(c.jjg, 0)} janjang pulangan ${monthShort(c.p)} belum diisi alasannya`, priority: 'sedang' }; } },
+
   { code: 'R17', title: 'Pertahankan praktik yang sudah baik',
     action: 'Dokumentasikan praktik panen dan perawatan yang membuat kinerja naik agar tetap dijalankan.',
     signals: 'Yield atau produksi naik dan stabil; margin positif.',
